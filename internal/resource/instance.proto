@@ -10,5 +10,9 @@ option go_package = "github.com/oxidecomputer/omni-infra-provider-oxide/internal
 // TODO: What information do I need for idempotency?
 message Instance {
   string uuid = 1;
-  string id = 2;
+  string schematic_id = 2;
+  string talos_version = 3;
+  string image_name = 4;
+  string image_id = 5;
+  string id = 6;
 }
