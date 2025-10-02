@@ -21,18 +21,15 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// TODO: Does Omin require fields here?
-// TODO: What information do I need for idempotency?
 type Instance struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Uuid          string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
-	SchematicId   string                 `protobuf:"bytes,2,opt,name=schematic_id,json=schematicId,proto3" json:"schematic_id,omitempty"`
-	TalosVersion  string                 `protobuf:"bytes,3,opt,name=talos_version,json=talosVersion,proto3" json:"talos_version,omitempty"`
-	ImageName     string                 `protobuf:"bytes,4,opt,name=image_name,json=imageName,proto3" json:"image_name,omitempty"`
-	ImageId       string                 `protobuf:"bytes,5,opt,name=image_id,json=imageId,proto3" json:"image_id,omitempty"`
-	Id            string                 `protobuf:"bytes,6,opt,name=id,proto3" json:"id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ImageId          string                 `protobuf:"bytes,2,opt,name=image_id,json=imageId,proto3" json:"image_id,omitempty"`
+	ImageName        string                 `protobuf:"bytes,3,opt,name=image_name,json=imageName,proto3" json:"image_name,omitempty"`
+	TalosSchematicId string                 `protobuf:"bytes,9,opt,name=talos_schematic_id,json=talosSchematicId,proto3" json:"talos_schematic_id,omitempty"`
+	TalosImageUrl    string                 `protobuf:"bytes,10,opt,name=talos_image_url,json=talosImageUrl,proto3" json:"talos_image_url,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Instance) Reset() {
@@ -65,30 +62,9 @@ func (*Instance) Descriptor() ([]byte, []int) {
 	return file_internal_resource_instance_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Instance) GetUuid() string {
+func (x *Instance) GetId() string {
 	if x != nil {
-		return x.Uuid
-	}
-	return ""
-}
-
-func (x *Instance) GetSchematicId() string {
-	if x != nil {
-		return x.SchematicId
-	}
-	return ""
-}
-
-func (x *Instance) GetTalosVersion() string {
-	if x != nil {
-		return x.TalosVersion
-	}
-	return ""
-}
-
-func (x *Instance) GetImageName() string {
-	if x != nil {
-		return x.ImageName
+		return x.Id
 	}
 	return ""
 }
@@ -100,9 +76,23 @@ func (x *Instance) GetImageId() string {
 	return ""
 }
 
-func (x *Instance) GetId() string {
+func (x *Instance) GetImageName() string {
 	if x != nil {
-		return x.Id
+		return x.ImageName
+	}
+	return ""
+}
+
+func (x *Instance) GetTalosSchematicId() string {
+	if x != nil {
+		return x.TalosSchematicId
+	}
+	return ""
+}
+
+func (x *Instance) GetTalosImageUrl() string {
+	if x != nil {
+		return x.TalosImageUrl
 	}
 	return ""
 }
@@ -111,15 +101,15 @@ var File_internal_resource_instance_proto protoreflect.FileDescriptor
 
 const file_internal_resource_instance_proto_rawDesc = "" +
 	"\n" +
-	" internal/resource/instance.proto\x12\x0eoxide.resource\"\xb0\x01\n" +
-	"\bInstance\x12\x12\n" +
-	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12!\n" +
-	"\fschematic_id\x18\x02 \x01(\tR\vschematicId\x12#\n" +
-	"\rtalos_version\x18\x03 \x01(\tR\ftalosVersion\x12\x1d\n" +
+	" internal/resource/instance.proto\x12\x0eoxide.resource\"\xaa\x01\n" +
+	"\bInstance\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
+	"\bimage_id\x18\x02 \x01(\tR\aimageId\x12\x1d\n" +
 	"\n" +
-	"image_name\x18\x04 \x01(\tR\timageName\x12\x19\n" +
-	"\bimage_id\x18\x05 \x01(\tR\aimageId\x12\x0e\n" +
-	"\x02id\x18\x06 \x01(\tR\x02idBFZDgithub.com/oxidecomputer/omni-infra-provider-oxide/internal/resourceb\x06proto3"
+	"image_name\x18\x03 \x01(\tR\timageName\x12,\n" +
+	"\x12talos_schematic_id\x18\t \x01(\tR\x10talosSchematicId\x12&\n" +
+	"\x0ftalos_image_url\x18\n" +
+	" \x01(\tR\rtalosImageUrlBFZDgithub.com/oxidecomputer/omni-infra-provider-oxide/internal/resourceb\x06proto3"
 
 var (
 	file_internal_resource_instance_proto_rawDescOnce sync.Once

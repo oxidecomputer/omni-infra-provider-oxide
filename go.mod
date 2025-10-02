@@ -5,7 +5,7 @@ go 1.25.1
 replace gopkg.in/yaml.v3 => github.com/unix4ever/yaml v0.0.0-20220527175918-f17b0f05cf2c
 
 require (
-	github.com/hashicorp/go-uuid v1.0.3
+	github.com/ardanlabs/conf/v3 v3.9.0
 	github.com/oxidecomputer/oxide.go v0.6.0
 	google.golang.org/protobuf v1.36.9
 )
