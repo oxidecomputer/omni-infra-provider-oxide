@@ -1,1 +1,9 @@
 = Oxide Omni Infrastructure Provider
+
+The Oxide Omni Infrastructure Provider integrates Sidero Labs Omni with Oxide,
+providing a mechanism to dynamically provision and deprovision Talos Linux
+instances using the
+https://docs.siderolabs.com/omni/infrastructure-and-extensions/infrastructure-providers[Omni Infrastructure Provider]
+architecture.
+
+*This project is still a work in progress!*
