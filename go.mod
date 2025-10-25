@@ -7,6 +7,7 @@ replace gopkg.in/yaml.v3 => github.com/unix4ever/yaml v0.0.0-20220527175918-f17b
 require (
 	github.com/ardanlabs/conf/v3 v3.9.0
 	github.com/oxidecomputer/oxide.go v0.6.0
+	github.com/ulikunitz/xz v0.5.12
 	google.golang.org/protobuf v1.36.9
 )
 

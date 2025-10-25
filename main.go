@@ -17,12 +17,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-//go:embed oxide.svg
-var providerIcon []byte
-
-//go:embed schema.json
-var providerSchema string
-
 type Config struct {
 	conf.Version
 	OxideHost              string `conf:"required,notzero,help:Oxide API host (e.g.; https://oxide.sys.example.com)."`
@@ -89,8 +83,8 @@ func run(ctx context.Context) error {
 	provider, err := infra.NewProvider(provider.ID, provisioner, infra.ProviderConfig{
 		Name:        cfg.ProviderName,
 		Description: cfg.ProviderDescription,
-		Icon:        base64.RawStdEncoding.EncodeToString(providerIcon),
-		Schema:      providerSchema,
+		Icon:        base64.StdEncoding.EncodeToString(provider.Icon),
+		Schema:      provider.MachineClassSchema,
 	})
 
 	opts := []infra.Option{

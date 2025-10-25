@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Oxide project where machines will be created."
+    },
+    "vcpus": {
+      "type": "integer",
+      "description": "Number of vCPUs to assign to the machine.",
+      "default": 2,
+      "minimum": 1
+    },
+    "memory": {
+      "type": "integer",
+      "description": "Amount of memory to assign to the instance, in gibibytes.",
+      "default": 8
+    },
+    "disk_size": {
+      "type": "integer",
+      "description": "Disk size, in gibibytes.",
+      "default": 10
+    },
+    "vpc": {
+      "type": "string",
+      "description": "Name of the VPC to use for the machine's network interface.",
+      "default": "default"
+    },
+    "subnet": {
+      "type": "string",
+      "description": "Name of the subnet to use for the machine's network interface.",
+      "default": "default"
+    }
+  },
+  "required": [
+    "project",
+    "vcpus",
+    "memory",
+    "disk_size",
+    "vpc",
+    "subnet"
+  ]
+}
