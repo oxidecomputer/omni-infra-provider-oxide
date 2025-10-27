@@ -21,7 +21,6 @@ import (
 	"github.com/siderolabs/omni/client/pkg/omni/resources/infra"
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 )
 
 //go:embed assets/user-data.tmpl
@@ -118,7 +117,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				)
 
 				logger.Info("generated oxide image name",
-					zap.String("oxide.image_name", imageName),
+					zap.String("oxide.image.name", imageName),
 				)
 
 				pctx.State.TypedSpec().Value.ImageName = imageName
@@ -143,7 +142,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				if err != nil {
 					if strings.Contains(err.Error(), "404") {
 						logger.Info("oxide image does not exist",
-							zap.String("oxide.image_name", imageName),
+							zap.String("oxide.image.name", imageName),
 						)
 						return nil
 					}
@@ -152,8 +151,8 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				}
 
 				logger.Info("fetched oxide image information",
-					zap.String("oxide.image_id", image.Id),
-					zap.String("oxide.image_name", imageName),
+					zap.String("oxide.image.id", image.Id),
+					zap.String("oxide.image.name", imageName),
 				)
 
 				pctx.State.TypedSpec().Value.ImageId = image.Id
@@ -271,6 +270,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 								}
 								errMu.Unlock()
 								logger.Error("failed uploading chunk",
+									zap.String("oxide.disk.id", disk.Id),
 									zap.String("error", err.Error()),
 								)
 								return
@@ -316,8 +316,8 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 					select {
 					case <-ticker.C:
 						logger.Info("bulk writing to oxide disk",
-							zap.String("disk", string(disk.Name)),
-							zap.Int64("offset", offset),
+							zap.String("oxide.disk.id", string(disk.Id)),
+							zap.Int64("oxide.disk.offset", offset),
 						)
 					default:
 					}
@@ -384,12 +384,9 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
 				instanceID := pctx.State.TypedSpec().Value.InstanceId
 
-				logger = logger.With(zap.String("omni.request_id", pctx.GetRequestID()))
-
 				if instanceID != "" {
 					logger.Info("confirming whether instance exists in oxide",
 						zap.String("oxide.instance.id", instanceID),
-						zap.Any("state", pctx.State.TypedSpec().Value),
 					)
 
 					instance, err := p.oxideClient.InstanceView(ctx, oxide.InstanceViewParams{
@@ -486,34 +483,25 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 
 // Deprovision destroys the Oxide machine that was created during [Provisioner.ProvisionSteps].
 func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machine *Machine, req *infra.MachineRequest) error {
-	logger.Info("DEBUG",
-		zap.Any("machine", machine),
-		zap.Any("req", req),
-		zap.Any("req.Metadata", req.Metadata()),
-		zap.Any("req.Metadata.ID", req.Metadata().ID()),
-		zap.Any("providerData", req.TypedSpec().Value.ProviderData),
-	)
-
-	var machineClass MachineClass
-	if err := yaml.Unmarshal([]byte(req.TypedSpec().Value.ProviderData), &machineClass); err != nil {
-		return fmt.Errorf("failed unmarshaling provider data: %w", err)
+	if machine == nil || machine.TypedSpec().Value.InstanceId == "" {
+		logger.Warn("deprovision called without machine details",
+			zap.Any("machine", machine),
+		)
+		return nil
 	}
 
-	// TODO: Figure out why machine is `nil` and use that instead.
-	// * https://github.com/siderolabs/omni/discussions/1633#discussioncomment-14756216
 	instance, err := p.oxideClient.InstanceView(ctx, oxide.InstanceViewParams{
-		Project:  oxide.NameOrId(machineClass.Project),
-		Instance: oxide.NameOrId(req.Metadata().ID()),
+		Instance: oxide.NameOrId(machine.TypedSpec().Value.InstanceId),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
-			logger.Info("instance not found, already deleted", zap.String("instance_id", machine.TypedSpec().Value.InstanceId))
+			logger.Info("instance not found, already deleted",
+				zap.String("oxide.instance.id", machine.TypedSpec().Value.InstanceId),
+			)
 			return nil
 		}
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
-
-	bootDiskID := instance.BootDiskId
 
 	if _, err := p.oxideClient.InstanceStop(ctx, oxide.InstanceStopParams{
 		Instance: oxide.NameOrId(instance.Id),
@@ -542,6 +530,11 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 			break
 		}
 
+		logger.Info("waiting for instance to stop",
+			zap.String("oxide.instance.id", instance.Id),
+			zap.String("oxide.instance.run_state", string(instance.RunState)),
+		)
+
 		time.Sleep(3 * time.Second)
 	}
 
@@ -552,17 +545,19 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 	}
 
 	logger.Info("deleted instance",
-		zap.String("instance_id", instance.Id),
+		zap.String("oxide.instance.id", instance.Id),
 	)
 
-	if bootDiskID != "" {
+	if instance.BootDiskId != "" {
 		if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
-			Disk: oxide.NameOrId(bootDiskID),
+			Disk: oxide.NameOrId(instance.BootDiskId),
 		}); err != nil {
 			return fmt.Errorf("failed deleting boot disk: %w", err)
 		}
 
-		logger.Info("deleted boot disk", zap.String("boot_disk_id", bootDiskID))
+		logger.Info("deleted boot disk",
+			zap.String("oxide.instance.boot_disk_id", instance.BootDiskId),
+		)
 	}
 
 	return nil
