@@ -62,7 +62,7 @@ require (
 	github.com/siderolabs/go-pointer v1.0.1 // indirect
 	github.com/siderolabs/image-factory v0.8.4 // indirect
 	github.com/siderolabs/net v0.4.0 // indirect
-	github.com/siderolabs/omni/client v1.2.0-beta.3.0.20251027150545-a91eabdf1e6a
+	github.com/siderolabs/omni/client v1.2.0-beta.3.0.20251029155136-c2cbf34b02e1
 	github.com/siderolabs/protoenc v0.2.4 // indirect
 	github.com/siderolabs/talos/pkg/machinery v1.12.0-alpha.1.0.20251017073026-8124efb42fd5 // indirect
 	github.com/stoewer/go-strcase v1.3.1 // indirect
@@ -77,5 +77,5 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20251007200510-49b9836ed3ff // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251007200510-49b9836ed3ff // indirect
 	google.golang.org/grpc v1.76.0 // indirect
-	gopkg.in/yaml.v3 v3.0.3
+	gopkg.in/yaml.v3 v3.0.3 // indirect
 )
