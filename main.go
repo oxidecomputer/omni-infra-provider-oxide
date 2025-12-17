@@ -17,6 +17,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+var version = "dev"
+
 type Config struct {
 	conf.Version
 	OxideHost              string `conf:"required,notzero,help:Oxide API host (e.g.; https://oxide.sys.example.com)."`
@@ -44,9 +46,8 @@ func run(ctx context.Context) error {
 	}
 
 	cfg := Config{
-		// TODO: Dynamic version from compile-time variables?
 		Version: conf.Version{
-			Build: "v0.1.0",
+			Build: version,
 			Desc:  "Oxide Omni infrastructure provider.",
 		},
 	}
