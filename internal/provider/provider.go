@@ -24,8 +24,8 @@ var Icon []byte
 //go:embed assets/machine-class-schema.json
 var MachineClassSchema string
 
-// MachineClass is the type that the Omni machine class will be unmarshaled
-// into.
+// MachineClass is the type that the JSON schema represented by
+// [MachineClassSchema] will be marshaled to and unmarshaled from.
 type MachineClass struct {
 	Project  string `json:"project" yaml:"project"`
 	VCPUS    int    `json:"vcpus" yaml:"vcpus"`

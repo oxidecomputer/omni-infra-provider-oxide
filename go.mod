@@ -1,6 +1,6 @@
 module github.com/oxidecomputer/omni-infra-provider-oxide
 
-go 1.25.2
+go 1.25.5
 
 replace gopkg.in/yaml.v3 => github.com/unix4ever/yaml v0.0.0-20220527175918-f17b0f05cf2c
 
