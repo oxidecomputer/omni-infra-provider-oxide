@@ -553,16 +553,6 @@ readerLoop:
 			break readerLoop
 		}
 
-		select {
-		case <-ctx.Done():
-			readerError = ctx.Err()
-			break readerLoop
-		case err := <-workerErrors:
-			workerError = errors.Join(workerError, err)
-			break readerLoop
-		default:
-		}
-
 		chunkHasData := false
 		for _, b := range buffer[:n] {
 			if b != 0 {
