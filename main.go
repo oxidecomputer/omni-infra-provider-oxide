@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/ardanlabs/conf/v3"
@@ -17,23 +18,13 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Version represents the version of the binary. It can be overridden at
+// compile-time as necessary.
 var version = "dev"
-
-type Config struct {
-	conf.Version
-	OxideHost              string `conf:"required,notzero,help:Oxide API host (e.g.; https://oxide.sys.example.com)."`
-	OxideToken             string `conf:"required,notzero,mask,help:Oxide API token."`
-	ProviderID             string `conf:"default:oxide,help:Provider ID to use within Omni."`
-	ProviderName           string `conf:"default:Oxide,help:Provider name to use within Omni."`
-	ProviderDescription    string `conf:"default:Oxide Omni infrastructure provider.,help:Provider description to use within Omni."`
-	ProvisionerConcurrency uint   `conf:"default:1,help:Number of concurrent provisioner operations."`
-	OmniEndpoint           string `conf:"required,notzero,help:Omni API endpoint (e.g.; https://omni.example.com)."`
-	OmniServiceAccountKey  string `conf:"required,notzero,mask,help:Omni service account key."`
-}
 
 func main() {
 	if err := run(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "%s", err.Error())
+		log.Fatalf("%s", err.Error())
 	}
 }
 

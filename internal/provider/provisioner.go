@@ -6,6 +6,8 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
+
 	"fmt"
 	"io"
 	"net/http"
@@ -45,6 +47,11 @@ func NewProvisioner(oxideClient *oxide.Client) *Provisioner {
 // ProvisionSteps returns the steps necessary to provision a [Machine].
 func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 	return []provision.Step[*Machine]{
+		// generate_schematic_id generates a Talos image factory schematic ID, which is
+		// the consistent representation for all the kernel parameters, extensions, and
+		// other configuration that can be passed to Talos Linux. This schematic ID is
+		// later used to uniquely identify images and skip steps that were already done
+		// for the given schematic ID.
 		provision.NewStep(
 			"generate_schematic_id",
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
@@ -59,8 +66,8 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 						"siderolabs/util-linux-tools",
 					),
 					// Connection parameters must not be present in kernel arguments since this
-					// infrastructure provider uses NoCloud images and passes the SideroLink
-					// configuration via cloud-init instead.
+					// infrastructure provider exclusively uses NoCloud images and passes the
+					// SideroLink configuration via cloud-init instead.
 					provision.WithoutConnectionParams(),
 				)
 				if err != nil {
@@ -76,6 +83,8 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				return nil
 			},
 		),
+		// generate_image_factory_url generates the URL to the specific Talos Linux
+		// image needed by this provision request.
 		provision.NewStep(
 			"generate_image_factory_url",
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
@@ -100,6 +109,10 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				return nil
 			},
 		),
+		// generate_image_name generates a consistent, unique name for the Talos Linux
+		// image that will be used as the image name in Oxide. A hash of the Talos image
+		// URL is used deduplicate images that use different schematics for the same
+		// Talos Linux version.
 		provision.NewStep(
 			"generate_image_name",
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
@@ -125,6 +138,8 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				return nil
 			},
 		),
+		// fetch_image_id checks whether the required Talos Linux image already exists
+		// in Oxide. This allows us to skip downloading the image in subsequent steps.
 		provision.NewStep(
 			"fetch_image_id",
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
@@ -160,13 +175,18 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				return nil
 			},
 		),
+		// create_image downloads the Talos Linux image and uploads it to Oxide as a
+		// project image.
 		provision.NewStep(
 			"create_image",
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
+				// We already have an image to use. Skip downloading one.
 				if pctx.State.TypedSpec().Value.ImageId != "" {
 					return nil
 				}
 
+				// We'll need the machine class information later but we don't want to download
+				// an entire image just to find out we couldn't unmarshal the machine class.
 				var machineClass MachineClass
 				if err := pctx.UnmarshalProviderData(&machineClass); err != nil {
 					return fmt.Errorf("failed unmarshaling provider data: %w", err)
@@ -201,10 +221,14 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 					return fmt.Errorf("failed syncing decompressed file: %w", err)
 				}
 
+				// We're about to read the downloaded image to upload it to Oxide. We must start
+				// at the beginning of the image.
 				if _, err := f.Seek(0, 0); err != nil {
 					return fmt.Errorf("failed seeking to beginning of file: %w", err)
 				}
 
+				// Retrieve the image size in bytes to create the right sized Oxide disk to hold
+				// the image.
 				fi, err := f.Stat()
 				if err != nil {
 					return fmt.Errorf("failed retrieving file information: %w", err)
@@ -213,12 +237,13 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				disk, err := p.oxideClient.DiskCreate(ctx, oxide.DiskCreateParams{
 					Project: oxide.NameOrId(machineClass.Project),
 					Body: &oxide.DiskCreate{
-						Description: fmt.Sprintf("Temporary disk for Oxide infrastructure provider (%s).", pctx.GetRequestID()),
+						Description: fmt.Sprintf("Temporary disk for Oxide Omni infrastructure provider (%s).", pctx.GetRequestID()),
 						DiskSource: oxide.DiskSource{
 							BlockSize: 512,
 							Type:      oxide.DiskSourceTypeImportingBlocks,
 						},
 						Name: oxide.Name(imageName),
+						// Round up to the nearest 1 GiB since disks must be multiples of 1 GiB.
 						Size: oxide.ByteCount((fi.Size() + 1024*1024*1024 - 1) / (1024 * 1024 * 1024) * (1024 * 1024 * 1024)),
 					},
 				})
@@ -237,96 +262,8 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 					return fmt.Errorf("failed starting bulk write import: %w", err)
 				}
 
-				// TODO: Refactor the bulk import code below.
-
-				type chunk struct {
-					offset int64
-					data   []byte
-				}
-
-				buf := make([]byte, 512*1024)
-				ch := make(chan chunk, 64)
-				var offset int64
-
-				var wg sync.WaitGroup
-				var workerErr error
-				var errMu sync.Mutex
-
-				for worker := range 8 {
-					wg.Add(1)
-					go func(worker int) {
-						defer wg.Done()
-						for c := range ch {
-							if err := p.oxideClient.DiskBulkWriteImport(ctx, oxide.DiskBulkWriteImportParams{
-								Disk: oxide.NameOrId(disk.Id),
-								Body: &oxide.ImportBlocksBulkWrite{
-									Base64EncodedData: base64.StdEncoding.EncodeToString(c.data),
-									Offset:            oxide.NewPointer(int(c.offset)),
-								},
-							}); err != nil {
-								errMu.Lock()
-								if workerErr == nil {
-									workerErr = err
-								}
-								errMu.Unlock()
-								logger.Error("failed uploading chunk",
-									zap.String("oxide.disk.id", disk.Id),
-									zap.String("error", err.Error()),
-								)
-								return
-							}
-						}
-					}(worker)
-				}
-
-				ticker := time.NewTicker(3 * time.Second)
-				defer ticker.Stop()
-
-				for {
-					n, err := f.Read(buf)
-					if err != nil {
-						if err == io.EOF {
-							break
-						}
-						return fmt.Errorf("failed reading chunk: %w", err)
-					}
-
-					if n == 0 {
-						break
-					}
-
-					allZeros := true
-					for _, b := range buf[:n] {
-						if b != 0 {
-							allZeros = false
-							break
-						}
-					}
-
-					if !allZeros {
-						data := make([]byte, n)
-						copy(data, buf[:n])
-						ch <- chunk{
-							offset: offset,
-							data:   data,
-						}
-					}
-					offset += int64(n)
-
-					select {
-					case <-ticker.C:
-						logger.Info("bulk writing to oxide disk",
-							zap.String("oxide.disk.id", string(disk.Id)),
-							zap.Int64("oxide.disk.offset", offset),
-						)
-					default:
-					}
-				}
-				close(ch)
-				wg.Wait()
-
-				if workerErr != nil {
-					return fmt.Errorf("worker failed uploading chunks: %w", workerErr)
+				if err := bulkImport(ctx, p.oxideClient, disk.Id, f); err != nil {
+					return fmt.Errorf("failed bulk importing to disk: %w", err)
 				}
 
 				if err := p.oxideClient.DiskBulkWriteImportStop(ctx, oxide.DiskBulkWriteImportStopParams{
@@ -349,7 +286,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 					Project:  oxide.NameOrId(machineClass.Project),
 				})
 				if err != nil {
-					return fmt.Errorf("failed creating snapshot: %w", err)
+					return fmt.Errorf("failed viewing snapshot: %w", err)
 				}
 				defer func() {
 					p.oxideClient.SnapshotDelete(ctx, oxide.SnapshotDeleteParams{
@@ -360,7 +297,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				image, err := p.oxideClient.ImageCreate(ctx, oxide.ImageCreateParams{
 					Project: oxide.NameOrId(machineClass.Project),
 					Body: &oxide.ImageCreate{
-						Description: fmt.Sprintf("Talos Linux v%s NoCloud (%s).", pctx.GetTalosVersion()),
+						Description: fmt.Sprintf("Talos Linux v%s NoCloud (%s).", pctx.GetTalosVersion(), pctx.State.TypedSpec().Value.TalosSchematicId),
 						Name:        oxide.Name(imageName),
 						Os:          "Talos Linux",
 						Source: oxide.ImageSource{
@@ -379,13 +316,15 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				return nil
 			},
 		),
+		// instance_create creates the Talos Linux instance and configures it to connect
+		// to Omni using cloud-init user data.
 		provision.NewStep(
 			"instance_create",
 			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
 				instanceID := pctx.State.TypedSpec().Value.InstanceId
 
 				if instanceID != "" {
-					logger.Info("confirming whether instance exists in oxide",
+					logger.Info("found existing instance id, confirming whether instance exists in oxide",
 						zap.String("oxide.instance.id", instanceID),
 					)
 
@@ -452,9 +391,8 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 						},
 						SshPublicKeys: []oxide.NameOrId{},
 						Start:         oxide.NewPointer(true),
-						// TODO: Stop using the template once https://github.com/siderolabs/talos/issues/11948 is released in v1.12.
 						UserData: base64.StdEncoding.EncodeToString(
-							[]byte(fmt.Sprintf(userdataTemplate, pctx.ConnectionParams.JoinConfig)),
+							fmt.Appendf(nil, userdataTemplate, pctx.ConnectionParams.JoinConfig),
 						),
 					},
 				}
@@ -558,6 +496,114 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 		logger.Info("deleted boot disk",
 			zap.String("oxide.instance.boot_disk_id", instance.BootDiskId),
 		)
+	}
+
+	return nil
+}
+
+// bulkImport imports bytes into an Oxide disk in chunks, skipping chunks that
+// contain all zeroes.
+func bulkImport(ctx context.Context, oxideClient *oxide.Client, diskID string, data io.Reader) error {
+	type chunk struct {
+		offset int64
+		data   []byte
+	}
+
+	numWorkers := 8
+	chunks := make(chan chunk, 2*numWorkers)
+
+	var wg sync.WaitGroup
+	workerErrors := make(chan error, numWorkers)
+
+	for range numWorkers {
+		wg.Go(func() {
+			for chunk := range chunks {
+				if err := oxideClient.DiskBulkWriteImport(ctx, oxide.DiskBulkWriteImportParams{
+					Disk: oxide.NameOrId(diskID),
+					Body: &oxide.ImportBlocksBulkWrite{
+						Base64EncodedData: base64.StdEncoding.EncodeToString(chunk.data),
+						Offset:            oxide.NewPointer(int(chunk.offset)),
+					},
+				}); err != nil {
+					workerErrors <- err
+					return
+				}
+			}
+		})
+	}
+
+	var readerError error
+	var workerError error
+	var offset int64
+	buffer := make([]byte, 512*1024) // 512 KiB.
+
+readerLoop:
+	for {
+		n, err := data.Read(buffer)
+		if err != nil {
+			if err == io.EOF {
+				break readerLoop
+			}
+
+			readerError = fmt.Errorf("failed reading chunk: %w", err)
+			break readerLoop
+		}
+
+		if n == 0 {
+			break readerLoop
+		}
+
+		chunkHasData := false
+		for _, b := range buffer[:n] {
+			if b != 0 {
+				chunkHasData = true
+				break
+			}
+		}
+
+		// This chunk is all zeroes. Advance the offset and continue reading.
+		if !chunkHasData {
+			offset += int64(n)
+			continue readerLoop
+		}
+
+		// Copy the data so each chunk owns its data.
+		data := make([]byte, n)
+		copy(data, buffer[:n])
+
+		c := chunk{
+			offset: offset,
+			data:   data,
+		}
+
+		// The multiple cases protect against a deadlock where all workers have returned
+		// and the chunks channel is blocked.
+		select {
+		case <-ctx.Done():
+			readerError = ctx.Err()
+			break readerLoop
+		case err := <-workerErrors:
+			workerError = errors.Join(workerError, err)
+			break readerLoop
+		case chunks <- c:
+		}
+		offset += int64(n)
+	}
+
+	close(chunks)
+	wg.Wait()
+	close(workerErrors)
+
+	if readerError != nil {
+		return readerError
+	}
+
+	for err := range workerErrors {
+		workerError = errors.Join(workerError, err)
+	}
+
+	if workerError != nil {
+		return workerError
 	}
 
 	return nil
