@@ -6,7 +6,7 @@ replace gopkg.in/yaml.v3 => github.com/unix4ever/yaml v0.0.0-20220527175918-f17b
 
 require (
 	github.com/ardanlabs/conf/v3 v3.9.0
-	github.com/oxidecomputer/oxide.go v0.7.0
+	github.com/oxidecomputer/oxide.go v0.7.1-0.20260127220329-e1ba7effd833
 	github.com/ulikunitz/xz v0.5.15
 	google.golang.org/protobuf v1.36.10
 )
@@ -70,8 +70,8 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20251009144603-d2f985daa21b // indirect
 	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251007200510-49b9836ed3ff // indirect

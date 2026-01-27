@@ -238,9 +238,12 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 					Project: oxide.NameOrId(machineClass.Project),
 					Body: &oxide.DiskCreate{
 						Description: fmt.Sprintf("Temporary disk for Oxide Omni infrastructure provider (%s).", pctx.GetRequestID()),
-						DiskSource: oxide.DiskSource{
-							BlockSize: 512,
-							Type:      oxide.DiskSourceTypeImportingBlocks,
+						DiskBackend: oxide.DiskBackend{
+							Type: oxide.DiskBackendTypeDistributed,
+							DiskSource: oxide.DiskSource{
+								BlockSize: 512,
+								Type:      oxide.DiskSourceTypeImportingBlocks,
+							},
 						},
 						Name: oxide.Name(imageName),
 						// Round up to the nearest 1 GiB since disks must be multiples of 1 GiB.
@@ -362,10 +365,13 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 						AutoRestartPolicy:  "",
 						BootDisk: &oxide.InstanceDiskAttachment{
 							Description: fmt.Sprintf("Managed by the Oxide Omni infrastructure provider (%s).", ID),
-							DiskSource: oxide.DiskSource{
-								BlockSize: 512,
-								Type:      oxide.DiskSourceTypeImage,
-								ImageId:   pctx.State.TypedSpec().Value.ImageId,
+							DiskBackend: oxide.DiskBackend{
+								Type: oxide.DiskBackendTypeDistributed,
+								DiskSource: oxide.DiskSource{
+									BlockSize: 512,
+									Type:      oxide.DiskSourceTypeImage,
+									ImageId:   pctx.State.TypedSpec().Value.ImageId,
+								},
 							},
 							Name: oxide.Name(pctx.GetRequestID()),
 							Size: oxide.ByteCount(machineClass.DiskSize * 1024 * 1024 * 1024),
