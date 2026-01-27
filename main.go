@@ -59,10 +59,10 @@ func run(ctx context.Context) error {
 
 	logger.Info("successfully parsed configuration", zap.Any("configuration", configStr))
 
-	oxideClient, err := oxide.NewClient(&oxide.Config{
-		Host:  cfg.OxideHost,
-		Token: cfg.OxideToken,
-	})
+	oxideClient, err := oxide.NewClient(
+		oxide.WithHost(cfg.OxideHost),
+		oxide.WithToken(cfg.OxideToken),
+	)
 	if err != nil {
 		return fmt.Errorf("failed creating oxide client: %w", err)
 	}
