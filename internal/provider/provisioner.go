@@ -391,6 +391,15 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 									Name:        oxide.Name(pctx.GetRequestID()),
 									VpcName:     oxide.Name(machineClass.VPC),
 									SubnetName:  oxide.Name(machineClass.Subnet),
+									IpConfig: oxide.PrivateIpStackCreate{
+										Value: oxide.PrivateIpStackCreateV4{
+											Value: oxide.PrivateIpv4StackCreate{
+												Ip: oxide.Ipv4Assignment{
+													Type: oxide.Ipv4AssignmentTypeAuto,
+												},
+											},
+										},
+									},
 								},
 							},
 							Type: oxide.InstanceNetworkInterfaceAttachmentTypeCreate,
