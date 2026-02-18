@@ -235,22 +235,22 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				}
 
 				disk, err := p.oxideClient.DiskCreate(ctx, oxide.DiskCreateParams{
-				Project: oxide.NameOrId(machineClass.Project),
-				Body: &oxide.DiskCreate{
-					Description: fmt.Sprintf("Temporary disk for Oxide Omni infrastructure provider (%s).", pctx.GetRequestID()),
-					DiskBackend: oxide.DiskBackend{
-						Value: &oxide.DiskBackendDistributed{
-							DiskSource: oxide.DiskSource{
-								Value: &oxide.DiskSourceImportingBlocks{
-									BlockSize: 512,
+					Project: oxide.NameOrId(machineClass.Project),
+					Body: &oxide.DiskCreate{
+						Description: fmt.Sprintf("Temporary disk for Oxide Omni infrastructure provider (%s).", pctx.GetRequestID()),
+						DiskBackend: oxide.DiskBackend{
+							Value: &oxide.DiskBackendDistributed{
+								DiskSource: oxide.DiskSource{
+									Value: &oxide.DiskSourceImportingBlocks{
+										BlockSize: 512,
+									},
 								},
 							},
 						},
+						Name: oxide.Name(imageName),
+						// Round up to the nearest 1 GiB since disks must be multiples of 1 GiB.
+						Size: oxide.ByteCount((fi.Size() + 1024*1024*1024 - 1) / (1024 * 1024 * 1024) * (1024 * 1024 * 1024)),
 					},
-					Name: oxide.Name(imageName),
-					// Round up to the nearest 1 GiB since disks must be multiples of 1 GiB.
-					Size: oxide.ByteCount((fi.Size() + 1024*1024*1024 - 1) / (1024 * 1024 * 1024) * (1024 * 1024 * 1024)),
-				},
 				})
 				if err != nil {
 					return fmt.Errorf("failed creating disk: %w", err)
