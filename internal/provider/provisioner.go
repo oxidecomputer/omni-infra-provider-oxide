@@ -235,20 +235,22 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 				}
 
 				disk, err := p.oxideClient.DiskCreate(ctx, oxide.DiskCreateParams{
-					Project: oxide.NameOrId(machineClass.Project),
-					Body: &oxide.DiskCreate{
-						Description: fmt.Sprintf("Temporary disk for Oxide Omni infrastructure provider (%s).", pctx.GetRequestID()),
-						DiskBackend: oxide.DiskBackend{
-							Type: oxide.DiskBackendTypeDistributed,
+				Project: oxide.NameOrId(machineClass.Project),
+				Body: &oxide.DiskCreate{
+					Description: fmt.Sprintf("Temporary disk for Oxide Omni infrastructure provider (%s).", pctx.GetRequestID()),
+					DiskBackend: oxide.DiskBackend{
+						Value: &oxide.DiskBackendDistributed{
 							DiskSource: oxide.DiskSource{
-								BlockSize: 512,
-								Type:      oxide.DiskSourceTypeImportingBlocks,
+								Value: &oxide.DiskSourceImportingBlocks{
+									BlockSize: 512,
+								},
 							},
 						},
-						Name: oxide.Name(imageName),
-						// Round up to the nearest 1 GiB since disks must be multiples of 1 GiB.
-						Size: oxide.ByteCount((fi.Size() + 1024*1024*1024 - 1) / (1024 * 1024 * 1024) * (1024 * 1024 * 1024)),
 					},
+					Name: oxide.Name(imageName),
+					// Round up to the nearest 1 GiB since disks must be multiples of 1 GiB.
+					Size: oxide.ByteCount((fi.Size() + 1024*1024*1024 - 1) / (1024 * 1024 * 1024) * (1024 * 1024 * 1024)),
+				},
 				})
 				if err != nil {
 					return fmt.Errorf("failed creating disk: %w", err)
@@ -304,8 +306,9 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 						Name:        oxide.Name(imageName),
 						Os:          "Talos Linux",
 						Source: oxide.ImageSource{
-							Id:   snapshot.Id,
-							Type: oxide.ImageSourceTypeSnapshot,
+							Value: &oxide.ImageSourceSnapshot{
+								Id: snapshot.Id,
+							},
 						},
 						Version: pctx.GetTalosVersion(),
 					},
@@ -363,19 +366,21 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 					Body: &oxide.InstanceCreate{
 						AntiAffinityGroups: []oxide.NameOrId{},
 						AutoRestartPolicy:  "",
-						BootDisk: &oxide.InstanceDiskAttachment{
-							Description: fmt.Sprintf("Managed by the Oxide Omni infrastructure provider (%s).", ID),
-							DiskBackend: oxide.DiskBackend{
-								Type: oxide.DiskBackendTypeDistributed,
-								DiskSource: oxide.DiskSource{
-									BlockSize: 512,
-									Type:      oxide.DiskSourceTypeImage,
-									ImageId:   pctx.State.TypedSpec().Value.ImageId,
+						BootDisk: oxide.InstanceDiskAttachment{
+							Value: &oxide.InstanceDiskAttachmentCreate{
+								Description: fmt.Sprintf("Managed by the Oxide Omni infrastructure provider (%s).", ID),
+								DiskBackend: oxide.DiskBackend{
+									Value: &oxide.DiskBackendDistributed{
+										DiskSource: oxide.DiskSource{
+											Value: &oxide.DiskSourceImage{
+												ImageId: pctx.State.TypedSpec().Value.ImageId,
+											},
+										},
+									},
 								},
+								Name: oxide.Name(pctx.GetRequestID()),
+								Size: oxide.ByteCount(machineClass.DiskSize * 1024 * 1024 * 1024),
 							},
-							Name: oxide.Name(pctx.GetRequestID()),
-							Size: oxide.ByteCount(machineClass.DiskSize * 1024 * 1024 * 1024),
-							Type: oxide.InstanceDiskAttachmentTypeCreate,
 						},
 						Description: fmt.Sprintf("Managed by the Oxide Omni infrastructure provider (%s).", ID),
 						Disks:       []oxide.InstanceDiskAttachment{},
@@ -385,24 +390,25 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 						Name:        oxide.Name(pctx.GetRequestID()),
 						Ncpus:       oxide.InstanceCpuCount(machineClass.VCPUS),
 						NetworkInterfaces: oxide.InstanceNetworkInterfaceAttachment{
-							Params: []oxide.InstanceNetworkInterfaceCreate{
-								{
-									Description: fmt.Sprintf("Managed by the Oxide Omni infrastructure provider (%s).", ID),
-									Name:        oxide.Name(pctx.GetRequestID()),
-									VpcName:     oxide.Name(machineClass.VPC),
-									SubnetName:  oxide.Name(machineClass.Subnet),
-									IpConfig: oxide.PrivateIpStackCreate{
-										Value: oxide.PrivateIpStackCreateV4{
-											Value: oxide.PrivateIpv4StackCreate{
-												Ip: oxide.Ipv4Assignment{
-													Type: oxide.Ipv4AssignmentTypeAuto,
+							Value: &oxide.InstanceNetworkInterfaceAttachmentCreate{
+								Params: []oxide.InstanceNetworkInterfaceCreate{
+									{
+										Description: fmt.Sprintf("Managed by the Oxide Omni infrastructure provider (%s).", ID),
+										Name:        oxide.Name(pctx.GetRequestID()),
+										VpcName:     oxide.Name(machineClass.VPC),
+										SubnetName:  oxide.Name(machineClass.Subnet),
+										IpConfig: oxide.PrivateIpStackCreate{
+											Value: oxide.PrivateIpStackCreateV4{
+												Value: oxide.PrivateIpv4StackCreate{
+													Ip: oxide.Ipv4Assignment{
+														Value: &oxide.Ipv4AssignmentAuto{},
+													},
 												},
 											},
 										},
 									},
 								},
 							},
-							Type: oxide.InstanceNetworkInterfaceAttachmentTypeCreate,
 						},
 						SshPublicKeys: []oxide.NameOrId{},
 						Start:         oxide.NewPointer(true),
