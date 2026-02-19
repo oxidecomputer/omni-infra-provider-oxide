@@ -23,6 +23,7 @@ import (
 	"github.com/siderolabs/omni/client/pkg/omni/resources/infra"
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed assets/user-data.tmpl
@@ -433,6 +434,36 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 
 				pctx.SetMachineUUID(pctx.State.TypedSpec().Value.Uuid)
 				pctx.SetMachineInfraID(pctx.State.TypedSpec().Value.InstanceId)
+
+				return nil
+			},
+		),
+		// create_provider_id_patch creates a Talos machine configuration patch that
+		// sets the providerID for the instance.
+		provision.NewStep(
+			"config_patch_provider_id",
+			func(ctx context.Context, logger *zap.Logger, pctx provision.Context[*Machine]) error {
+				instanceID := pctx.State.TypedSpec().Value.InstanceId
+
+				patch := struct {
+					Machine struct {
+						Kubelet struct {
+							ExtraConfig map[string]string `yaml:"extraConfig"`
+						} `yaml:"kubelet"`
+					} `yaml:"machine"`
+				}{}
+				patch.Machine.Kubelet.ExtraConfig = map[string]string{
+					"providerID": fmt.Sprintf("oxide://%s", instanceID),
+				}
+
+				b, err := yaml.Marshal(patch)
+				if err != nil {
+					return fmt.Errorf("failed marshaling provider id patch: %w", err)
+				}
+
+				if err := pctx.CreateConfigPatch(ctx, "providerID", b); err != nil {
+					return fmt.Errorf("failed creating providerID config patch: %w", err)
+				}
 
 				return nil
 			},
