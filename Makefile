@@ -92,3 +92,11 @@ dev: build
 		--env OXIDE_HOST \
 		--env OXIDE_TOKEN \
 		$(IMAGE_FULL)
+
+.PHONY: lint
+lint:
+	@go tool -modfile tools/go.mod golangci-lint run
+
+.PHONY: fmt
+fmt:
+	@go tool -modfile tools/go.mod golangci-lint fmt
