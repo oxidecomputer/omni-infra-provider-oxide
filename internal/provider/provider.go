@@ -27,10 +27,10 @@ var MachineClassSchema string
 // MachineClass is the type that the JSON schema represented by
 // [MachineClassSchema] will be marshaled to and unmarshaled from.
 type MachineClass struct {
-	Project  string `json:"project" yaml:"project"`
-	VCPUS    int    `json:"vcpus" yaml:"vcpus"`
-	Memory   int    `json:"memory" yaml:"memory"`
+	Project  string `json:"project"   yaml:"project"`
+	VCPUS    int    `json:"vcpus"     yaml:"vcpus"`
+	Memory   int    `json:"memory"    yaml:"memory"`
 	DiskSize int    `json:"disk_size" yaml:"disk_size"`
-	VPC      string `json:"vpc" yaml:"vpc"`
-	Subnet   string `json:"subnet" yaml:"subnet"`
+	VPC      string `json:"vpc"       yaml:"vpc"`
+	Subnet   string `json:"subnet"    yaml:"subnet"`
 }

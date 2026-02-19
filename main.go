@@ -78,6 +78,9 @@ func run(ctx context.Context) error {
 		Icon:        base64.StdEncoding.EncodeToString(provider.Icon),
 		Schema:      provider.MachineClassSchema,
 	})
+	if err != nil {
+		return fmt.Errorf("failed creating infrastructure provider: %w", err)
+	}
 
 	opts := []infra.Option{
 		infra.WithOmniEndpoint(cfg.OmniEndpoint),
