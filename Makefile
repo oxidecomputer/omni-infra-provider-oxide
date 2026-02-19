@@ -93,6 +93,10 @@ dev: build
 		--env OXIDE_TOKEN \
 		$(IMAGE_FULL)
 
+.PHONY: generate
+generate:
+	@go tool -modfile tools/go.mod buf generate
+
 .PHONY: lint
 lint:
 	@go tool -modfile tools/go.mod golangci-lint run
