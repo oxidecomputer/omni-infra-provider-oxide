@@ -2,8 +2,8 @@ package provider
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,9 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-//go:embed assets/user-data.tmpl
-var userdataTemplate string
-
 // Ensure [Provisioner] implements the [provision.Provisioner] interface.
 var _ provision.Provisioner[*Machine] = (*Provisioner)(nil)
 
@@ -23,12 +20,17 @@ var _ provision.Provisioner[*Machine] = (*Provisioner)(nil)
 // deprovision machines on Oxide.
 type Provisioner struct {
 	oxideClient *oxide.Client
+	nameservers []string
 }
 
 // NewProvisioner builds and returns a new [Provisioner].
-func NewProvisioner(oxideClient *oxide.Client) *Provisioner {
+func NewProvisioner(
+	oxideClient *oxide.Client,
+	nameservers []string,
+) *Provisioner {
 	return &Provisioner{
 		oxideClient: oxideClient,
+		nameservers: slices.Clone(nameservers),
 	}
 }
 
@@ -42,6 +44,7 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 		provision.NewStep("fetch_image_id", p.fetchImageID),
 		provision.NewStep("create_image", p.createImage),
 		provision.NewStep("instance_create", p.createInstance),
+		provision.NewStep("config_patch_nameservers", p.configPatchNameservers),
 		provision.NewStep("config_patch_provider_id", p.configPatchProviderID),
 	}
 }
