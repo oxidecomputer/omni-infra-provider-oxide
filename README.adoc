@@ -55,8 +55,13 @@ docker run --rm \
   --env OMNI_SERVICE_ACCOUNT_KEY \
   --env OXIDE_HOST \
   --env OXIDE_TOKEN \
-  ghcr.io/oxidecomputer/omni-infra-provider-oxide:${TAG}
+  ghcr.io/oxidecomputer/omni-infra-provider-oxide:${TAG} \
+  --nameserver 9.9.9.9 \
+  --nameserver 8.8.8.8
 ----
+
+Repeat `--nameserver` to configure all nameservers that should be set in
+Talos runtime and post-join configuration patches.
 
 == Development
 
@@ -81,6 +86,13 @@ export OXIDE_TOKEN='oxide-token-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
 [source,shell]
 ----
 make dev
+----
+
+To set nameservers while running locally:
+
+[source,shell]
+----
+go run . --nameserver 9.9.9.9 --nameserver 8.8.8.8
 ----
 
 == Release Process

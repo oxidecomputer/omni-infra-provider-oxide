@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 
 	"github.com/ardanlabs/conf/v3"
 	"github.com/oxidecomputer/omni-infra-provider-oxide/internal/provider"
@@ -67,7 +68,14 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("failed creating oxide client: %w", err)
 	}
 
-	provisioner := provider.NewProvisioner(oxideClient)
+	if len(cfg.Nameservers) == 0 {
+		cfg.Nameservers = []string{"9.9.9.9", "8.8.8.8"}
+	}
+
+	provisioner := provider.NewProvisioner(
+		oxideClient,
+		slices.Clone(cfg.Nameservers),
+	)
 
 	// Explicitly set the provider ID. See [provider.ID] for more information.
 	provider.ID = cfg.ProviderID
