@@ -377,6 +377,23 @@ func (p *Provisioner) createInstance(
 		return fmt.Errorf("failed unmarshaling provider data: %w", err)
 	}
 
+	resolverConfigPatch, err := p.resolverConfigPatchYAML()
+	if err != nil {
+		return fmt.Errorf(
+			"failed marshaling runtime resolver config patch: %w",
+			err,
+		)
+	}
+
+	userData := pctx.ConnectionParams.JoinConfig
+	if len(resolverConfigPatch) > 0 {
+		userData = fmt.Sprintf(
+			"%s\n\n---\n%s",
+			userData,
+			resolverConfigPatch,
+		)
+	}
+
 	params := oxide.InstanceCreateParams{
 		Project: oxide.NameOrId(machineClass.Project),
 		Body: &oxide.InstanceCreate{
@@ -435,7 +452,7 @@ func (p *Provisioner) createInstance(
 			SshPublicKeys: []oxide.NameOrId{},
 			Start:         oxide.NewPointer(true),
 			UserData: base64.StdEncoding.EncodeToString(
-				fmt.Appendf(nil, userdataTemplate, pctx.ConnectionParams.JoinConfig),
+				[]byte(userData),
 			),
 		},
 	}
@@ -455,6 +472,71 @@ func (p *Provisioner) createInstance(
 
 	pctx.SetMachineUUID(pctx.State.TypedSpec().Value.Uuid)
 	pctx.SetMachineInfraID(pctx.State.TypedSpec().Value.InstanceId)
+
+	return nil
+}
+
+func (p *Provisioner) resolverConfigPatchYAML() (string, error) {
+	if len(p.nameservers) == 0 {
+		return "", nil
+	}
+
+	type resolverNameserver struct {
+		Address string `yaml:"address"`
+	}
+
+	patch := struct {
+		APIVersion  string               `yaml:"apiVersion"`
+		Kind        string               `yaml:"kind"`
+		Nameservers []resolverNameserver `yaml:"nameservers"`
+	}{
+		APIVersion: "v1alpha1",
+		Kind:       "ResolverConfig",
+	}
+
+	for _, ns := range p.nameservers {
+		patch.Nameservers = append(
+			patch.Nameservers,
+			resolverNameserver{Address: ns},
+		)
+	}
+
+	b, err := yaml.Marshal(patch)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(b)), nil
+}
+
+// configPatchNameservers creates a Talos machine configuration patch that sets
+// nameservers for the instance.
+func (p *Provisioner) configPatchNameservers(
+	ctx context.Context,
+	logger *zap.Logger,
+	pctx provision.Context[*Machine],
+) error {
+	patch, err := p.resolverConfigPatchYAML()
+	if err != nil {
+		return fmt.Errorf(
+			"failed marshaling nameserver patch: %w",
+			err,
+		)
+	}
+
+	if len(patch) == 0 {
+		logger.Info("skipping nameserver config patch, none configured")
+		return nil
+	}
+
+	b := []byte(patch)
+
+	if err := pctx.CreateConfigPatch(ctx, "nameservers", b); err != nil {
+		return fmt.Errorf(
+			"failed creating nameservers config patch: %w",
+			err,
+		)
+	}
 
 	return nil
 }
