@@ -9,6 +9,8 @@ configured as nodes in a Kubernetes cluster.
 
 Please note the following before using the Oxide Omni infrastructure provider.
 
+* The infrastructure provider requires Talos Linux v1.12 or greater.
+
 * The infrastructure provider is a dynamic provider, meaning it provisions and
 deprovisions Oxide instances on demand as Omni users create and scale Kubernetes
 clusters.

@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"strings"
 	"time"
@@ -12,9 +11,6 @@ import (
 	"github.com/siderolabs/omni/client/pkg/omni/resources/infra"
 	"go.uber.org/zap"
 )
-
-//go:embed assets/user-data.tmpl
-var userdataTemplate string
 
 // Ensure [Provisioner] implements the [provision.Provisioner] interface.
 var _ provision.Provisioner[*Machine] = (*Provisioner)(nil)
