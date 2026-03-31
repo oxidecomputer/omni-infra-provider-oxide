@@ -435,7 +435,7 @@ func (p *Provisioner) createInstance(
 			SshPublicKeys: []oxide.NameOrId{},
 			Start:         oxide.NewPointer(true),
 			UserData: base64.StdEncoding.EncodeToString(
-				fmt.Appendf(nil, userdataTemplate, pctx.ConnectionParams.JoinConfig),
+				[]byte(pctx.ConnectionParams.JoinConfig),
 			),
 		},
 	}
