@@ -521,7 +521,7 @@ func bulkImport(
 					Disk: oxide.NameOrId(diskID),
 					Body: &oxide.ImportBlocksBulkWrite{
 						Base64EncodedData: base64.StdEncoding.EncodeToString(chunk.data),
-						Offset:            oxide.NewPointer(int(chunk.offset)),
+						Offset:            oxide.NewPointer(uint64(chunk.offset)),
 					},
 				}); err != nil {
 					workerErrors <- err
