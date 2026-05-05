@@ -21,16 +21,14 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Machine is the per-request state the infrastructure provider persists between
+// provisioning steps. It's intentionally empty. Each step is idempotent on
+// its own by querying the Oxide API for the current state of its resources, so
+// there's nothing the provider needs to remember.
 type Machine struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Uuid             string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
-	InstanceId       string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	ImageId          string                 `protobuf:"bytes,3,opt,name=image_id,json=imageId,proto3" json:"image_id,omitempty"`
-	ImageName        string                 `protobuf:"bytes,4,opt,name=image_name,json=imageName,proto3" json:"image_name,omitempty"`
-	TalosSchematicId string                 `protobuf:"bytes,5,opt,name=talos_schematic_id,json=talosSchematicId,proto3" json:"talos_schematic_id,omitempty"`
-	TalosImageUrl    string                 `protobuf:"bytes,6,opt,name=talos_image_url,json=talosImageUrl,proto3" json:"talos_image_url,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Machine) Reset() {
@@ -63,62 +61,12 @@ func (*Machine) Descriptor() ([]byte, []int) {
 	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Machine) GetUuid() string {
-	if x != nil {
-		return x.Uuid
-	}
-	return ""
-}
-
-func (x *Machine) GetInstanceId() string {
-	if x != nil {
-		return x.InstanceId
-	}
-	return ""
-}
-
-func (x *Machine) GetImageId() string {
-	if x != nil {
-		return x.ImageId
-	}
-	return ""
-}
-
-func (x *Machine) GetImageName() string {
-	if x != nil {
-		return x.ImageName
-	}
-	return ""
-}
-
-func (x *Machine) GetTalosSchematicId() string {
-	if x != nil {
-		return x.TalosSchematicId
-	}
-	return ""
-}
-
-func (x *Machine) GetTalosImageUrl() string {
-	if x != nil {
-		return x.TalosImageUrl
-	}
-	return ""
-}
-
 var File_internal_provider_spec_machine_proto protoreflect.FileDescriptor
 
 const file_internal_provider_spec_machine_proto_rawDesc = "" +
 	"\n" +
-	"$internal/provider/spec/machine.proto\x12\x13oxide.provider.spec\"\xce\x01\n" +
-	"\aMachine\x12\x12\n" +
-	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1f\n" +
-	"\vinstance_id\x18\x02 \x01(\tR\n" +
-	"instanceId\x12\x19\n" +
-	"\bimage_id\x18\x03 \x01(\tR\aimageId\x12\x1d\n" +
-	"\n" +
-	"image_name\x18\x04 \x01(\tR\timageName\x12,\n" +
-	"\x12talos_schematic_id\x18\x05 \x01(\tR\x10talosSchematicId\x12&\n" +
-	"\x0ftalos_image_url\x18\x06 \x01(\tR\rtalosImageUrlBKZIgithub.com/oxidecomputer/omni-infra-provider-oxide/internal/provider/specb\x06proto3"
+	"$internal/provider/spec/machine.proto\x12\x13oxide.provider.spec\"\t\n" +
+	"\aMachineBKZIgithub.com/oxidecomputer/omni-infra-provider-oxide/internal/provider/specb\x06proto3"
 
 var (
 	file_internal_provider_spec_machine_proto_rawDescOnce sync.Once
