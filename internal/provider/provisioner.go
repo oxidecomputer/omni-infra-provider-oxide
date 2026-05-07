@@ -33,6 +33,7 @@ var _ provision.Provisioner[*Machine] = (*Provisioner)(nil)
 // deprovision machines on Oxide.
 type Provisioner struct {
 	oxideClient *oxide.Client
+	httpClient  *http.Client
 
 	// imageGroup is used to make [Provisioner.ensureImage] safe for concurrent
 	// use, ensuring only one goroutine performs the expensive download and upload
@@ -44,6 +45,9 @@ type Provisioner struct {
 func NewProvisioner(oxideClient *oxide.Client) *Provisioner {
 	return &Provisioner{
 		oxideClient: oxideClient,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
@@ -116,7 +120,7 @@ func (p *Provisioner) ensureImage(
 		defer cancel()
 
 		f, err := downloadImageToTempFile(
-			imageCtx, talosImage.URL, talosImage.Name,
+			imageCtx, p.httpClient, talosImage.URL, talosImage.Name,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed downloading talos image: %w", err)
@@ -140,8 +144,12 @@ func (p *Provisioner) ensureImage(
 	case <-ctx.Done():
 		return fmt.Errorf("timed out while creating image: %w", ctx.Err())
 	case res := <-ch:
-		return fmt.Errorf("failed creating image: %w", res.Err)
+		if res.Err != nil {
+			return fmt.Errorf("failed creating image: %w", res.Err)
+		}
 	}
+
+	return nil
 }
 
 // ensureInstance ensures that the requested Talos instance exists in the target
@@ -387,7 +395,7 @@ func (p *Provisioner) Deprovision(
 	if instance.BootDiskId != "" {
 		if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
 			Disk: oxide.NameOrId(instance.BootDiskId),
-		}); err != nil {
+		}); err != nil && !strings.Contains(err.Error(), "404") {
 			return fmt.Errorf("failed deleting boot disk: %w", err)
 		}
 
@@ -485,6 +493,7 @@ func resolveTalosImage(
 // responsible for closing and removing the returned file.
 func downloadImageToTempFile(
 	ctx context.Context,
+	httpClient *http.Client,
 	url string,
 	namePrefix string,
 ) (_ *os.File, err error) {
@@ -506,7 +515,7 @@ func downloadImageToTempFile(
 		return nil, fmt.Errorf("failed creating image request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed downloading image: %w", err)
 	}
@@ -735,45 +744,51 @@ func bulkImport(
 						Offset:            new(uint64(c.offset)),
 					},
 				}); err != nil {
-					return err
+					return fmt.Errorf("failed writing chunk at offset %d: %w", c.offset, err)
 				}
 			}
 			return nil
 		})
 	}
 
-	g.Go(func() error {
-		defer close(chunks)
-		var offset int64
-		buffer := make([]byte, chunkSize)
-		zeros := make([]byte, chunkSize)
+	var readErr error
+	var offset int64
+	buffer := make([]byte, chunkSize)
+	zeros := make([]byte, chunkSize)
 
-		for {
-			n, err := data.Read(buffer)
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					return nil
-				}
-				return fmt.Errorf("failed reading chunk: %w", err)
+readLoop:
+	for {
+		n, err := data.Read(buffer)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				readErr = fmt.Errorf("failed reading chunk: %w", err)
 			}
-			if n == 0 {
-				return nil
-			}
-
-			// Skip chunks that are all zeroes. The disk is already zeroed.
-			if bytes.Equal(buffer[:n], zeros[:n]) {
-				offset += int64(n)
-				continue
-			}
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case chunks <- chunk{offset: offset, data: bytes.Clone(buffer[:n])}:
-			}
-			offset += int64(n)
+			break
 		}
-	})
+		if n == 0 {
+			break
+		}
 
-	return g.Wait()
+		// Skip chunks that are all zeroes. The disk is already zeroed.
+		if bytes.Equal(buffer[:n], zeros[:n]) {
+			offset += int64(n)
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			readErr = fmt.Errorf("timed out while reading chunk: %w", ctx.Err())
+			break readLoop
+		case chunks <- chunk{offset: offset, data: bytes.Clone(buffer[:n])}:
+		}
+		offset += int64(n)
+	}
+
+	close(chunks)
+
+	if err := g.Wait(); err != nil {
+		return fmt.Errorf("failed waiting for bulk import workers to exit: %w", err)
+	}
+
+	return readErr
 }
