@@ -3,9 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/oxidecomputer/oxide.go/oxide"
@@ -87,10 +86,24 @@ func (p *Provisioner) ensureImage(
 		return fmt.Errorf("failed retrieving machine class from context: %w", err)
 	}
 
+	logger = logger.With(
+		zap.String("omni.request.id", pctx.GetRequestID()),
+		zap.Any("omni.machine_class", machineClass),
+		zap.String("omni.request.talos_version", pctx.GetTalosVersion()),
+	)
+
 	talosImage, err := resolveTalosImage(ctx, logger, pctx)
 	if err != nil {
 		return fmt.Errorf("failed resolving talos image: %w", err)
 	}
+
+	logger = logger.With(
+		zap.String("talos.image.name", talosImage.Name),
+		zap.String("talos.image.schematic_id", talosImage.SchematicID),
+		zap.String("talos.image.url", talosImage.URL),
+	)
+
+	logger.Info("ensuring oxide image")
 
 	_, err = p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
 		Image:   oxide.NameOrId(talosImage.Name),
@@ -98,9 +111,10 @@ func (p *Provisioner) ensureImage(
 	})
 	switch {
 	case err == nil:
-		// Image already exists. Nothing to do.
+		logger.Info("oxide image already exists, skipping creation")
 		return nil
 	case !strings.Contains(err.Error(), "404"):
+		logger.Error("failed viewing oxide image", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide image: %w", err)
 	}
 
@@ -109,6 +123,12 @@ func (p *Provisioner) ensureImage(
 	// a single download/upload, while requests for the same image name in different
 	// projects will each perform a download/upload.
 	key := fmt.Sprintf("%s/%s", machineClass.Project, talosImage.Name)
+
+	logger = logger.With(
+		zap.String("singleflight.key", key),
+	)
+
+	logger.Info("oxide image not found, downloading and uploading")
 
 	// Use DoChan so each caller can return when its own context is canceled without
 	// aborting the shared work. The leader runs on a detached context so one caller
@@ -120,7 +140,7 @@ func (p *Provisioner) ensureImage(
 		defer cancel()
 
 		f, err := downloadImageToTempFile(
-			imageCtx, p.httpClient, talosImage.URL, talosImage.Name,
+			imageCtx, logger, p.httpClient, talosImage.URL, talosImage.Name,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed downloading talos image: %w", err)
@@ -134,14 +154,21 @@ func (p *Provisioner) ensureImage(
 			return nil, fmt.Errorf("failed retrieving file information: %w", err)
 		}
 
-		return nil, createOxideImage(
+		if err := createOxideImage(
 			imageCtx, logger, p.oxideClient, pctx, machineClass,
 			talosImage, fi.Size(), f,
-		)
+		); err != nil {
+			return nil, fmt.Errorf("failed creating oxide image: %w", err)
+		}
+
+		return nil, nil
 	})
 
 	select {
 	case <-ctx.Done():
+		logger.Error("timed out while creating image",
+			zap.Error(ctx.Err()),
+		)
 		return fmt.Errorf("timed out while creating image: %w", ctx.Err())
 	case res := <-ch:
 		if res.Err != nil {
@@ -164,15 +191,28 @@ func (p *Provisioner) ensureInstance(
 		return fmt.Errorf("failed retrieving machine class from context: %w", err)
 	}
 
+	logger = logger.With(
+		zap.String("omni.request.id", pctx.GetRequestID()),
+		zap.Any("omni.machine_class", machineClass),
+		zap.String("omni.request.talos_version", pctx.GetTalosVersion()),
+		zap.String("oxide.instance.name", pctx.GetRequestID()),
+	)
+
+	logger.Info("ensuring oxide instance")
+
 	instance, err := p.oxideClient.InstanceView(ctx, oxide.InstanceViewParams{
 		Project:  oxide.NameOrId(machineClass.Project),
 		Instance: oxide.NameOrId(pctx.GetRequestID()),
 	})
 	switch {
 	case err == nil:
-		// Instance already exists. Nothing to do.
+		logger.Info("oxide instance already exists, skipping creation",
+			zap.String("oxide.instance.id", instance.Id),
+			zap.String("oxide.instance.run_state", string(instance.RunState)),
+		)
 		return nil
 	case !strings.Contains(err.Error(), "404"):
+		logger.Error("failed viewing oxide instance", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
 
@@ -181,13 +221,24 @@ func (p *Provisioner) ensureInstance(
 		return fmt.Errorf("failed resolving talos image: %w", err)
 	}
 
+	logger = logger.With(
+		zap.String("talos.image.name", talosImage.Name),
+		zap.String("talos.image.schematic_id", talosImage.SchematicID),
+		zap.String("talos.image.url", talosImage.URL),
+	)
+
 	image, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
 		Project: oxide.NameOrId(machineClass.Project),
 		Image:   oxide.NameOrId(talosImage.Name),
 	})
 	if err != nil {
+		logger.Error("failed viewing oxide image during instance create", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide image: %w", err)
 	}
+
+	logger = logger.With(
+		zap.String("oxide.image.id", image.Id),
+	)
 
 	params := oxide.InstanceCreateParams{
 		Project: oxide.NameOrId(machineClass.Project),
@@ -255,14 +306,16 @@ func (p *Provisioner) ensureInstance(
 		},
 	}
 
+	logger.Info("creating oxide instance")
+
 	instance, err = p.oxideClient.InstanceCreate(ctx, params)
 	if err != nil {
+		logger.Error("failed creating oxide instance", zap.Error(err))
 		return fmt.Errorf("failed creating oxide instance: %w", err)
 	}
 
-	logger.Info("created instance",
+	logger.Info("created oxide instance",
 		zap.String("oxide.instance.id", instance.Id),
-		zap.String("oxide.instance.name", string(instance.Name)),
 	)
 
 	return nil
@@ -281,13 +334,30 @@ func (p *Provisioner) ensureProviderID(
 		return fmt.Errorf("failed retrieving machine class from context: %w", err)
 	}
 
+	logger = logger.With(
+		zap.String("omni.request.id", pctx.GetRequestID()),
+		zap.Any("omni.machine_class", machineClass),
+		zap.String("omni.request.talos_version", pctx.GetTalosVersion()),
+	)
+
+	logger.Info("ensuring providerID config patch")
+
 	instance, err := p.oxideClient.InstanceView(ctx, oxide.InstanceViewParams{
 		Project:  oxide.NameOrId(machineClass.Project),
 		Instance: oxide.NameOrId(pctx.GetRequestID()),
 	})
 	if err != nil {
+		logger.Error("failed viewing oxide instance", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
+
+	providerID := fmt.Sprintf("oxide://%s", instance.Id)
+
+	logger = logger.With(
+		zap.String("oxide.instance.id", instance.Id),
+		zap.String("oxide.instance.name", string(instance.Name)),
+		zap.String("kubelet.provider_id", providerID),
+	)
 
 	patch := struct {
 		Machine struct {
@@ -297,21 +367,25 @@ func (p *Provisioner) ensureProviderID(
 		} `yaml:"machine"`
 	}{}
 	patch.Machine.Kubelet.ExtraConfig = map[string]string{
-		"providerID": fmt.Sprintf("oxide://%s", instance.Id),
+		"providerID": providerID,
 	}
 
 	b, err := yaml.Marshal(patch)
 	if err != nil {
+		logger.Error("failed marshaling providerID patch", zap.Error(err))
 		return fmt.Errorf(
 			"failed marshaling provider id patch: %w", err,
 		)
 	}
 
 	if err := pctx.CreateConfigPatch(ctx, "providerID", b); err != nil {
+		logger.Error("failed creating providerID config patch", zap.Error(err))
 		return fmt.Errorf(
 			"failed creating providerID config patch: %w", err,
 		)
 	}
+
+	logger.Info("created providerID config patch")
 
 	return nil
 }
@@ -329,8 +403,17 @@ func (p *Provisioner) Deprovision(
 		[]byte(req.TypedSpec().Value.ProviderData),
 		&machineClass,
 	); err != nil {
-		return fmt.Errorf("failed to unmarshal provider data: %w", err)
+		logger.Error("failed unmarshaling provider data", zap.Error(err))
+		return fmt.Errorf("failed unmarshaling provider data: %w", err)
 	}
+
+	logger = logger.With(
+		zap.String("omni.request.id", req.Metadata().ID()),
+		zap.Any("omni.machine_class", machineClass),
+		zap.String("oxide.instance.name", req.Metadata().ID()),
+	)
+
+	logger.Info("deprovisioning machine")
 
 	instance, err := p.oxideClient.InstanceView(ctx, oxide.InstanceViewParams{
 		Project:  oxide.NameOrId(machineClass.Project),
@@ -338,19 +421,24 @@ func (p *Provisioner) Deprovision(
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
-			logger.Info("instance not found, already deleted",
-				zap.String("oxide.instance.name", req.Metadata().ID()),
-				zap.String("oxide.project", machineClass.Project),
-			)
+			logger.Info("oxide instance not found, already deleted")
 			return nil
 		}
+		logger.Error("failed viewing oxide instance", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
+
+	logger = logger.With(
+		zap.String("oxide.instance.id", instance.Id),
+	)
+
+	logger.Info("stopping oxide instance")
 
 	if _, err := p.oxideClient.InstanceStop(ctx, oxide.InstanceStopParams{
 		Instance: oxide.NameOrId(instance.Id),
 	}); err != nil {
-		return fmt.Errorf("failed to stop oxide instance: %w", err)
+		logger.Error("failed stopping oxide instance", zap.Error(err))
+		return fmt.Errorf("failed stopping oxide instance: %w", err)
 	}
 
 	stopCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -359,7 +447,8 @@ func (p *Provisioner) Deprovision(
 	for {
 		select {
 		case <-stopCtx.Done():
-			return fmt.Errorf("timed out waiting for instance to stop: %w", ctx.Err())
+			logger.Error("timed out waiting for instance to stop", zap.Error(stopCtx.Err()))
+			return fmt.Errorf("timed out waiting for instance to stop: %w", stopCtx.Err())
 		default:
 		}
 
@@ -367,6 +456,7 @@ func (p *Provisioner) Deprovision(
 			Instance: oxide.NameOrId(instance.Id),
 		})
 		if err != nil {
+			logger.Error("failed refreshing oxide instance state", zap.Error(err))
 			return fmt.Errorf("failed refreshing oxide instance state: %w", err)
 		}
 
@@ -375,7 +465,6 @@ func (p *Provisioner) Deprovision(
 		}
 
 		logger.Info("waiting for instance to stop",
-			zap.String("oxide.instance.id", instance.Id),
 			zap.String("oxide.instance.run_state", string(instance.RunState)),
 		)
 
@@ -385,24 +474,35 @@ func (p *Provisioner) Deprovision(
 	if err := p.oxideClient.InstanceDelete(ctx, oxide.InstanceDeleteParams{
 		Instance: oxide.NameOrId(instance.Id),
 	}); err != nil {
+		logger.Error("failed deleting oxide instance", zap.Error(err))
 		return fmt.Errorf("failed deleting oxide instance: %w", err)
 	}
 
-	logger.Info("deleted instance",
-		zap.String("oxide.instance.id", instance.Id),
+	logger.Info("deleted oxide instance")
+
+	if instance.BootDiskId == "" {
+		logger.Info("oxide instance has no boot disk, nothing to delete")
+		return nil
+	}
+
+	logger = logger.With(
+		zap.String("oxide.instance.boot_disk_id", instance.BootDiskId),
 	)
 
-	if instance.BootDiskId != "" {
-		if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
-			Disk: oxide.NameOrId(instance.BootDiskId),
-		}); err != nil && !strings.Contains(err.Error(), "404") {
-			return fmt.Errorf("failed deleting boot disk: %w", err)
-		}
+	logger.Info("deprovisioning boot disk")
 
-		logger.Info("deleted boot disk",
-			zap.String("oxide.instance.boot_disk_id", instance.BootDiskId),
-		)
+	if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
+		Disk: oxide.NameOrId(instance.BootDiskId),
+	}); err != nil {
+		if !strings.Contains(err.Error(), "404") {
+			logger.Error("failed deleting oxide boot disk", zap.Error(err))
+			return fmt.Errorf("failed deleting oxide boot disk: %w", err)
+		}
+		logger.Info("oxide boot disk already deleted")
+		return nil
 	}
+
+	logger.Info("deleted oxide boot disk")
 
 	return nil
 }
@@ -411,16 +511,6 @@ func (p *Provisioner) Deprovision(
 func roundToNearestGibibyte(n int64) int64 {
 	const Gibibyte = 1024 * 1024 * 1024
 	return (n + Gibibyte - 1) / Gibibyte * Gibibyte
-}
-
-// randomSuffix returns a hex-encoded random string built from n bytes of
-// crypto/rand entropy. The returned string has length 2*n.
-func randomSuffix(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed reading random bytes: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
 
 // TalosImage holds all the information needed for a requested Talos image.
@@ -493,12 +583,17 @@ func resolveTalosImage(
 // responsible for closing and removing the returned file.
 func downloadImageToTempFile(
 	ctx context.Context,
+	logger *zap.Logger,
 	httpClient *http.Client,
 	url string,
 	namePrefix string,
 ) (_ *os.File, err error) {
+	logger.Info("downloading talos image")
+	start := time.Now()
+
 	f, err := os.CreateTemp("", namePrefix)
 	if err != nil {
+		logger.Error("failed creating temporary file", zap.Error(err))
 		return nil, fmt.Errorf(
 			"failed creating temporary file: %w", err,
 		)
@@ -512,16 +607,22 @@ func downloadImageToTempFile(
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		logger.Error("failed creating image request", zap.Error(err))
 		return nil, fmt.Errorf("failed creating image request: %w", err)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		logger.Error("failed downloading talos image", zap.Error(err))
 		return nil, fmt.Errorf("failed downloading image: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("unexpected status downloading talos image",
+			zap.Int("http.status_code", resp.StatusCode),
+			zap.String("http.status", resp.Status),
+		)
 		return nil, fmt.Errorf(
 			"unexpected status downloading image: %s", resp.Status,
 		)
@@ -529,16 +630,26 @@ func downloadImageToTempFile(
 
 	xzReader, err := xz.NewReader(resp.Body)
 	if err != nil {
+		logger.Error("failed creating xz reader", zap.Error(err))
 		return nil, fmt.Errorf("failed creating xz reader: %w", err)
 	}
 
-	if _, err = io.Copy(f, xzReader); err != nil {
+	if _, err := io.Copy(f, xzReader); err != nil {
+		logger.Error("failed decompressing talos image",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("failed decompressing image: %w", err)
 	}
 
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		logger.Error("failed seeking to start of image file", zap.Error(err))
 		return nil, fmt.Errorf("failed seeking to start of image file: %w", err)
 	}
+
+	logger.Info("successfully downloaded talos image",
+		zap.String("talos.image.path", f.Name()),
+		zap.Duration("duration", time.Since(start)),
+	)
 
 	return f, nil
 }
@@ -557,21 +668,16 @@ func createOxideImage(
 	imageSize int64,
 	r io.Reader,
 ) error {
-	imageName := oxide.Name(talosImage.Name)
-	project := oxide.NameOrId(machineClass.Project)
-	talosVersion := pctx.GetTalosVersion()
+	createStart := time.Now()
+	imageSize = roundToNearestGibibyte(imageSize)
 
-	// Scratch artifacts are suffixed with a fresh random token per invocation so
-	// they never collide with concurrent runs or with in-flight cleanups from a
-	// previous attempt.
-	suffix, err := randomSuffix(4)
-	if err != nil {
-		return fmt.Errorf("failed generating scratch name suffix: %w", err)
-	}
-	scratchName := oxide.Name(fmt.Sprintf("%s-%s", talosImage.Name, suffix))
+	logger.Info("creating oxide image from talos image",
+		zap.String("oxide.image.name", talosImage.Name),
+		zap.Int64("oxide.image.size_bytes", imageSize),
+	)
 
 	disk, err := client.DiskCreate(ctx, oxide.DiskCreateParams{
-		Project: project,
+		Project: oxide.NameOrId(machineClass.Project),
 		Body: &oxide.DiskCreate{
 			Description: fmt.Sprintf(
 				"Temporary disk for Oxide Omni infrastructure provider (%s).",
@@ -586,14 +692,15 @@ func createOxideImage(
 					},
 				},
 			},
-			Name: scratchName,
-			Size: oxide.ByteCount(roundToNearestGibibyte(imageSize)),
+			Name: oxide.Name(talosImage.Name),
+			Size: oxide.ByteCount(imageSize),
 		},
 	})
 	if err != nil {
+		logger.Error("failed creating scratch disk", zap.Error(err))
 		return fmt.Errorf("failed creating disk: %w", err)
 	}
-	diskID := oxide.NameOrId(disk.Id)
+
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx), 30*time.Second,
@@ -602,16 +709,12 @@ func createOxideImage(
 		// A successful [oxide.DiskFinalizeImport] consumes the disk, so a 404 here is
 		// the expected success case and should not be logged as an error.
 		if err := client.DiskDelete(cleanupCtx, oxide.DiskDeleteParams{
-			Disk: diskID,
+			Disk: oxide.NameOrId(disk.Id),
 		}); err != nil && !strings.Contains(err.Error(), "404") {
-			logger.Error("failed deleting temporary disk",
-				zap.String("oxide.disk.id", disk.Id),
-				zap.Error(err),
-			)
+			logger.Error("failed deleting temporary disk", zap.Error(err))
 		}
 	}()
 
-	snapshotNameOrID := oxide.NameOrId(scratchName)
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx), 30*time.Second,
@@ -620,61 +723,81 @@ func createOxideImage(
 		// [importBytesToDisk] may fail before the snapshot is created, in which case a
 		// 404 here is expected and should not be logged as an error.
 		if err := client.SnapshotDelete(cleanupCtx, oxide.SnapshotDeleteParams{
-			Snapshot: snapshotNameOrID,
-			Project:  project,
+			Snapshot: oxide.NameOrId(talosImage.Name),
+			Project:  oxide.NameOrId(machineClass.Project),
 		}); err != nil && !strings.Contains(err.Error(), "404") {
-			logger.Error("failed deleting temporary snapshot",
-				zap.String("oxide.snapshot.name", string(scratchName)),
-				zap.Error(err),
-			)
+			logger.Error("failed deleting temporary snapshot", zap.Error(err))
 		}
 	}()
 
+	importStart := time.Now()
 	// If [importBytesToDisk] fails after starting but before stopping, server-side
 	// import state will still be reset when the deferred [oxide.DiskDelete]
 	// above removes the disk entirely, so an explicit stop on the error path is
 	// unnecessary.
-	if err := importBytesToDisk(ctx, client, diskID, scratchName, r); err != nil {
+	if err := importBytesToDisk(
+		ctx,
+		logger,
+		client,
+		oxide.NameOrId(disk.Id),
+		oxide.Name(talosImage.Name),
+		imageSize,
+		r,
+	); err != nil {
+		logger.Error("failed importing bytes to scratch disk", zap.Error(err))
 		return fmt.Errorf("failed importing bytes to disk: %w", err)
 	}
 
+	logger.Info("completed bulk import to scratch disk",
+		zap.Duration("duration", time.Since(importStart)),
+	)
+
 	snapshot, err := client.SnapshotView(ctx, oxide.SnapshotViewParams{
-		Snapshot: snapshotNameOrID,
-		Project:  project,
+		Snapshot: oxide.NameOrId(talosImage.Name),
+		Project:  oxide.NameOrId(machineClass.Project),
 	})
 	if err != nil {
+		logger.Error("failed viewing scratch snapshot", zap.Error(err))
 		return fmt.Errorf("failed viewing snapshot: %w", err)
 	}
 
-	if _, err := client.ImageCreate(ctx, oxide.ImageCreateParams{
-		Project: project,
+	image, err := client.ImageCreate(ctx, oxide.ImageCreateParams{
+		Project: oxide.NameOrId(machineClass.Project),
 		Body: &oxide.ImageCreate{
 			Description: fmt.Sprintf(
 				"Talos Linux v%s NoCloud (%s).",
-				talosVersion,
+				pctx.GetTalosVersion(),
 				talosImage.SchematicID,
 			),
-			Name: imageName,
+			Name: oxide.Name(talosImage.Name),
 			Os:   "Talos Linux",
 			Source: oxide.ImageSource{
 				Value: &oxide.ImageSourceSnapshot{
 					Id: snapshot.Id,
 				},
 			},
-			Version: talosVersion,
+			Version: pctx.GetTalosVersion(),
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		// Another concurrent provisioner may have already created the image with
 		// the same name. Treat that as a successful no-op since the image content
 		// is deterministic for a given name. Our scratch disk and snapshot still get
 		// cleaned up via the deferred deletes above.
 		if !strings.Contains(err.Error(), "409") {
+			logger.Error("failed creating oxide image", zap.Error(err))
 			return fmt.Errorf("failed creating image: %w", err)
 		}
-		logger.Info("image already exists, skipping creation",
-			zap.String("oxide.image.name", string(imageName)),
+		logger.Info("oxide image already exists, skipping creation",
+			zap.Duration("duration", time.Since(createStart)),
 		)
+		return nil
 	}
+
+	logger.Info("created oxide image",
+		zap.String("oxide.image.id", image.Id),
+		zap.Duration("duration", time.Since(createStart)),
+	)
 
 	return nil
 }
@@ -684,33 +807,42 @@ func createOxideImage(
 // and be ready to accept a bulk-write import.
 func importBytesToDisk(
 	ctx context.Context,
+	logger *zap.Logger,
 	client *oxide.Client,
-	disk oxide.NameOrId,
+	diskID oxide.NameOrId,
 	snapshotName oxide.Name,
+	totalSize int64,
 	r io.Reader,
 ) error {
 	if err := client.DiskBulkWriteImportStart(ctx, oxide.DiskBulkWriteImportStartParams{
-		Disk: disk,
+		Disk: diskID,
 	}); err != nil {
+		logger.Error("failed starting bulk write import", zap.Error(err))
 		return fmt.Errorf("failed starting bulk write import: %w", err)
 	}
+	logger.Debug("started bulk write import")
 
-	if err := bulkImport(ctx, client, disk, r); err != nil {
+	if err := bulkImport(ctx, logger, client, diskID, totalSize, r); err != nil {
 		return fmt.Errorf("failed bulk importing to disk: %w", err)
 	}
+	logger.Debug("finished bulk import")
 
 	if err := client.DiskBulkWriteImportStop(ctx, oxide.DiskBulkWriteImportStopParams{
-		Disk: disk,
+		Disk: diskID,
 	}); err != nil {
+		logger.Error("failed stopping bulk write import", zap.Error(err))
 		return fmt.Errorf("failed stopping bulk write import: %w", err)
 	}
+	logger.Debug("stopped bulk write import")
 
 	if err := client.DiskFinalizeImport(ctx, oxide.DiskFinalizeImportParams{
-		Disk: disk,
+		Disk: diskID,
 		Body: &oxide.FinalizeDisk{SnapshotName: snapshotName},
 	}); err != nil {
+		logger.Error("failed finalizing disk import", zap.Error(err))
 		return fmt.Errorf("failed finalizing disk import: %w", err)
 	}
+	logger.Debug("finalized disk import")
 
 	return nil
 }
@@ -719,8 +851,10 @@ func importBytesToDisk(
 // chunks that contain all zeroes.
 func bulkImport(
 	ctx context.Context,
+	logger *zap.Logger,
 	oxideClient *oxide.Client,
-	disk oxide.NameOrId,
+	diskID oxide.NameOrId,
+	totalSize int64,
 	data io.Reader,
 ) error {
 	type chunk struct {
@@ -734,18 +868,24 @@ func bulkImport(
 	g, ctx := errgroup.WithContext(ctx)
 	chunks := make(chan chunk, 2*workers)
 
+	var sentBytes atomic.Int64
+
 	for range workers {
 		g.Go(func() error {
 			for c := range chunks {
 				if err := oxideClient.DiskBulkWriteImport(ctx, oxide.DiskBulkWriteImportParams{
-					Disk: disk,
+					Disk: diskID,
 					Body: &oxide.ImportBlocksBulkWrite{
 						Base64EncodedData: base64.StdEncoding.EncodeToString(c.data),
 						Offset:            new(uint64(c.offset)),
 					},
 				}); err != nil {
-					return fmt.Errorf("failed writing chunk at offset %d: %w", c.offset, err)
+					logger.Error("failed writing chunk to oxide disk",
+						zap.Int64("oxide.image.bulk_import.offset_bytes", c.offset),
+						zap.Error(err))
+					return fmt.Errorf("failed writing chunk at offset_bytes %d: %w", c.offset, err)
 				}
+				sentBytes.Add(int64(len(c.data)))
 			}
 			return nil
 		})
@@ -756,12 +896,20 @@ func bulkImport(
 	buffer := make([]byte, chunkSize)
 	zeros := make([]byte, chunkSize)
 
+	start := time.Now()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 readLoop:
 	for {
 		n, err := data.Read(buffer)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				readErr = fmt.Errorf("failed reading chunk: %w", err)
+				logger.Error("failed reading chunk from image",
+					zap.Int64("oxide.image.bulk_import.offset_bytes", offset),
+					zap.Error(err),
+				)
 			}
 			break
 		}
@@ -776,8 +924,30 @@ readLoop:
 		}
 
 		select {
+		case <-ticker.C:
+			fields := []zap.Field{
+				zap.Duration("oxide.image.bulk_import.duration", time.Since(start)),
+			}
+			if totalSize > 0 {
+				pct := float64(sentBytes.Load()) * 100 / float64(totalSize)
+				fields = append(fields,
+					zap.Float64("oxide.image.bulk_import.progress", pct),
+				)
+				logger.Info("still performing bulk import", fields...)
+			}
+		default:
+		}
+
+		select {
 		case <-ctx.Done():
-			readErr = fmt.Errorf("timed out while reading chunk: %w", ctx.Err())
+			readErr = fmt.Errorf(
+				"context canceled during bulk import read at offset_bytes %d: %w",
+				offset, ctx.Err(),
+			)
+			logger.Error("context canceled during bulk import read",
+				zap.Int64("oxide.image.bulk_import.offset_bytes", offset),
+				zap.Error(ctx.Err()),
+			)
 			break readLoop
 		case chunks <- chunk{offset: offset, data: bytes.Clone(buffer[:n])}:
 		}
@@ -789,6 +959,10 @@ readLoop:
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("failed waiting for bulk import workers to exit: %w", err)
 	}
+
+	logger.Info("bulk import complete",
+		zap.Duration("oxide.image.bulk_import.duration", time.Since(start)),
+	)
 
 	return readErr
 }
