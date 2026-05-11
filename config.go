@@ -11,7 +11,7 @@ type Config struct {
 	ProviderID             string `conf:"default:oxide,help:Provider ID."`
 	ProviderName           string `conf:"default:Oxide,help:Provider name."`
 	ProviderDescription    string `conf:"default:Oxide Omni infrastructure provider.,help:Provider description."`
-	ProvisionerConcurrency uint   `conf:"default:1,help:Number of concurrent provisioner operations."`
+	ProvisionerConcurrency uint   `conf:"default:5,help:Number of concurrent provisioner operations."`
 	OmniEndpoint           string `conf:"required,notzero,help:Omni API endpoint (e.g.; https://omni.example.com)."`
 	OmniServiceAccountKey  string `conf:"required,notzero,mask,help:Omni service account key."`
 }
