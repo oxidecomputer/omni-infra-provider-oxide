@@ -868,8 +868,6 @@ func bulkImport(
 	g, ctx := errgroup.WithContext(ctx)
 	chunks := make(chan chunk, 2*workers)
 
-	var sentBytes atomic.Int64
-
 	for range workers {
 		g.Go(func() error {
 			for c := range chunks {
@@ -885,7 +883,6 @@ func bulkImport(
 						zap.Error(err))
 					return fmt.Errorf("failed writing chunk at offset_bytes %d: %w", c.offset, err)
 				}
-				sentBytes.Add(int64(len(c.data)))
 			}
 			return nil
 		})
@@ -899,6 +896,8 @@ func bulkImport(
 	start := time.Now()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	var processedBytes atomic.Int64
 
 readLoop:
 	for {
@@ -920,6 +919,7 @@ readLoop:
 		// Skip chunks that are all zeroes. The disk is already zeroed.
 		if bytes.Equal(buffer[:n], zeros[:n]) {
 			offset += int64(n)
+			processedBytes.Add(int64(n))
 			continue
 		}
 
@@ -929,7 +929,7 @@ readLoop:
 				zap.Duration("oxide.image.bulk_import.duration", time.Since(start)),
 			}
 			if totalSize > 0 {
-				pct := float64(sentBytes.Load()) * 100 / float64(totalSize)
+				pct := float64(processedBytes.Load()) * 100 / float64(totalSize)
 				fields = append(fields,
 					zap.Float64("oxide.image.bulk_import.progress", pct),
 				)
@@ -952,6 +952,7 @@ readLoop:
 		case chunks <- chunk{offset: offset, data: bytes.Clone(buffer[:n])}:
 		}
 		offset += int64(n)
+		processedBytes.Add(int64(n))
 	}
 
 	close(chunks)
