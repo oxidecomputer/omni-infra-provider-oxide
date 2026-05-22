@@ -105,13 +105,15 @@ func (p *Provisioner) ensureImage(
 
 	logger.Info("ensuring oxide image")
 
-	_, err = p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
+	existingImage, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
 		Image:   oxide.NameOrId(talosImage.Name),
 		Project: oxide.NameOrId(machineClass.Project),
 	})
 	switch {
 	case err == nil:
-		logger.Info("oxide image already exists, skipping creation")
+		logger.Info("oxide image already exists, skipping creation",
+			zap.String("oxide.image.id", existingImage.Id),
+		)
 		return nil
 	case !strings.Contains(err.Error(), "404"):
 		logger.Error("failed viewing oxide image", zap.Error(err))
@@ -444,12 +446,15 @@ func (p *Provisioner) Deprovision(
 	stopCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-stopCtx.Done():
 			logger.Error("timed out waiting for instance to stop", zap.Error(stopCtx.Err()))
 			return fmt.Errorf("timed out waiting for instance to stop: %w", stopCtx.Err())
-		default:
+		case <-ticker.C:
 		}
 
 		instance, err := p.oxideClient.InstanceView(stopCtx, oxide.InstanceViewParams{
@@ -467,8 +472,6 @@ func (p *Provisioner) Deprovision(
 		logger.Info("waiting for instance to stop",
 			zap.String("oxide.instance.run_state", string(instance.RunState)),
 		)
-
-		time.Sleep(3 * time.Second)
 	}
 
 	if err := p.oxideClient.InstanceDelete(ctx, oxide.InstanceDeleteParams{
