@@ -5,39 +5,95 @@
       "type": "string",
       "description": "Oxide project where machines will be created."
     },
-    "vcpus": {
+    "ncpus": {
       "type": "integer",
       "description": "Number of vCPUs to assign to the machine.",
-      "default": 2,
+      "default": 1,
       "minimum": 1
     },
     "memory": {
       "type": "integer",
       "description": "Amount of memory to assign to the instance, in gibibytes.",
-      "default": 8
+      "default": 4,
+      "minimum": 1
     },
-    "disk_size": {
+    "boot_disk_size": {
       "type": "integer",
-      "description": "Disk size, in gibibytes.",
-      "default": 10
+      "description": "Boot disk size, in gibibytes.",
+      "default": 10,
+      "minimum": 1
     },
-    "vpc": {
-      "type": "string",
-      "description": "Name of the VPC to use for the machine's network interface.",
-      "default": "default"
+    "data_disks": {
+      "type": "array",
+      "description": "Additional data disks to attach to the machine. Each disk is created blank and attached at instance creation time.",
+      "default": [],
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Backend type for the data disk. 'distributed' creates a Crucible-backed disk; 'local' creates a sled-local disk.",
+            "enum": ["distributed", "local"]
+          },
+          "size": {
+            "type": "integer",
+            "description": "Data disk size, in gibibytes.",
+            "minimum": 1
+          }
+        },
+        "required": ["type", "size"],
+        "additionalProperties": false
+      }
     },
-    "subnet": {
+    "network_interfaces": {
+      "type": "array",
+      "description": "Network interfaces to attach to the machine.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "ip_config": {
+            "type": "string",
+            "description": "IP configuration for the network interface.",
+            "enum": ["v4", "v6", "dual_stack"]
+          },
+          "subnet_name": {
+            "type": "string",
+            "description": "Name of the subnet to use for the network interface."
+          },
+          "vpc_name": {
+            "type": "string",
+            "description": "Name of the VPC to use for the network interface."
+          }
+        },
+        "required": ["ip_config", "subnet_name", "vpc_name"],
+        "additionalProperties": false
+      }
+    },
+    "auto_restart_policy": {
       "type": "string",
-      "description": "Name of the subnet to use for the machine's network interface.",
-      "default": "default"
+      "description": "Auto restart policy for the machine.",
+      "default": "best_effort",
+      "enum": ["never", "best_effort"]
+    },
+    "cpu_platform": {
+      "type": "string",
+      "description": "CPU platform for the machine.",
+      "default": "amd_milan",
+      "enum": ["amd_milan", "amd_turin"]
+    },
+    "anti_affinity_groups": {
+      "type": "array",
+      "description": "Anti-affinity groups to place the machine in.",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
     "project",
-    "vcpus",
-    "memory",
-    "disk_size",
-    "vpc",
-    "subnet"
+    "boot_disk_size",
+    "network_interfaces"
   ]
 }

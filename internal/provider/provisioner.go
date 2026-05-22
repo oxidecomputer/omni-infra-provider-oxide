@@ -71,6 +71,11 @@ func machineClassFromContext(
 			"failed unmarshaling provider data: %w", err,
 		)
 	}
+
+	if err := machineClass.Validate(); err != nil {
+		return MachineClass{}, fmt.Errorf("invalid machine class: %w", err)
+	}
+
 	return machineClass, nil
 }
 
@@ -245,8 +250,14 @@ func (p *Provisioner) ensureInstance(
 	params := oxide.InstanceCreateParams{
 		Project: oxide.NameOrId(machineClass.Project),
 		Body: &oxide.InstanceCreate{
-			AntiAffinityGroups: []oxide.NameOrId{},
-			AutoRestartPolicy:  "",
+			AntiAffinityGroups: func() []oxide.NameOrId {
+				var antiAffinityGroups []oxide.NameOrId
+				for _, val := range machineClass.AntiAffinityGroups {
+					antiAffinityGroups = append(antiAffinityGroups, val)
+				}
+				return antiAffinityGroups
+			}(),
+			AutoRestartPolicy: machineClass.AutoRestartPolicy,
 			BootDisk: oxide.InstanceDiskAttachment{
 				Value: &oxide.InstanceDiskAttachmentCreate{
 					Description: fmt.Sprintf(
@@ -262,44 +273,114 @@ func (p *Provisioner) ensureInstance(
 							},
 						},
 					},
-					Name: oxide.Name(pctx.GetRequestID()),
-					Size: oxide.ByteCount(machineClass.DiskSize * 1024 * 1024 * 1024),
+					Name: oxide.Name(fmt.Sprintf("talos-%s", pctx.GetRequestID())),
+					Size: oxide.ByteCount(machineClass.BootDiskSize * 1024 * 1024 * 1024),
 				},
 			},
+			CpuPlatform: machineClass.CPUPlatform,
 			Description: fmt.Sprintf(
 				"Managed by the Oxide Omni infrastructure provider (%s).",
 				ID,
 			),
-			Disks:       []oxide.InstanceDiskAttachment{},
-			ExternalIps: []oxide.ExternalIpCreate{},
-			Hostname:    oxide.Hostname(pctx.GetRequestID()),
-			Memory:      oxide.ByteCount(machineClass.Memory * 1024 * 1024 * 1024),
-			Name:        oxide.Name(pctx.GetRequestID()),
-			Ncpus:       oxide.InstanceCpuCount(machineClass.VCPUS),
-			NetworkInterfaces: oxide.InstanceNetworkInterfaceAttachment{
-				Value: &oxide.InstanceNetworkInterfaceAttachmentCreate{
-					Params: []oxide.InstanceNetworkInterfaceCreate{
-						{
+			Disks: func() []oxide.InstanceDiskAttachment {
+				attachments := make([]oxide.InstanceDiskAttachment, 0)
+
+				for i, dd := range machineClass.DataDisks {
+					var backend oxide.DiskBackend
+					switch dd.Type {
+					case oxide.DiskBackendTypeLocal:
+						backend = oxide.DiskBackend{Value: &oxide.DiskBackendLocal{}}
+					case oxide.DiskBackendTypeDistributed:
+						backend = oxide.DiskBackend{
+							Value: &oxide.DiskBackendDistributed{
+								DiskSource: oxide.DiskSource{
+									Value: &oxide.DiskSourceBlank{BlockSize: 4096},
+								},
+							},
+						}
+					default:
+						continue
+					}
+
+					attachments = append(attachments, oxide.InstanceDiskAttachment{
+						Value: &oxide.InstanceDiskAttachmentCreate{
 							Description: fmt.Sprintf(
 								"Managed by the Oxide Omni infrastructure provider (%s).",
 								ID,
 							),
-							Name:       oxide.Name(pctx.GetRequestID()),
-							VpcName:    oxide.Name(machineClass.VPC),
-							SubnetName: oxide.Name(machineClass.Subnet),
-							IpConfig: oxide.PrivateIpStackCreate{
-								Value: oxide.PrivateIpStackCreateV4{
-									Value: oxide.PrivateIpv4StackCreate{
-										Ip: oxide.Ipv4Assignment{
-											Value: &oxide.Ipv4AssignmentAuto{},
-										},
+							DiskBackend: backend,
+							Name:        oxide.Name(fmt.Sprintf("data-%02d-%s", i, pctx.GetRequestID())),
+							Size:        dd.Size * 1024 * 1024 * 1024,
+						},
+					})
+				}
+
+				return attachments
+			}(),
+			ExternalIps: []oxide.ExternalIpCreate{},
+			Hostname:    oxide.Hostname(pctx.GetRequestID()),
+			Memory:      machineClass.Memory * 1024 * 1024 * 1024,
+			Name:        oxide.Name(pctx.GetRequestID()),
+			Ncpus:       machineClass.NCPUS,
+			NetworkInterfaces: func() oxide.InstanceNetworkInterfaceAttachment {
+				params := make([]oxide.InstanceNetworkInterfaceCreate, 0)
+
+				for i, val := range machineClass.NetworkInterfaces {
+					var ipConfig oxide.PrivateIpStackCreate
+					switch val.IPConfig {
+					case oxide.PrivateIpConfigTypeV4:
+						ipConfig.Value = oxide.PrivateIpStackCreateV4{
+							Value: oxide.PrivateIpv4StackCreate{
+								Ip: oxide.Ipv4Assignment{
+									Value: oxide.Ipv4AssignmentAuto{},
+								},
+							},
+						}
+					case oxide.PrivateIpConfigTypeV6:
+						ipConfig.Value = oxide.PrivateIpStackCreateV6{
+							Value: oxide.PrivateIpv6StackCreate{
+								Ip: oxide.Ipv6Assignment{
+									Value: oxide.Ipv6AssignmentAuto{},
+								},
+							},
+						}
+					case oxide.PrivateIpConfigTypeDualStack:
+						ipConfig.Value = oxide.PrivateIpStackCreateDualStack{
+							Value: oxide.PrivateIpStackCreateDualStackValue{
+								V4: oxide.PrivateIpv4StackCreate{
+									Ip: oxide.Ipv4Assignment{
+										Value: oxide.Ipv4AssignmentAuto{},
+									},
+								},
+								V6: oxide.PrivateIpv6StackCreate{
+									Ip: oxide.Ipv6Assignment{
+										Value: oxide.Ipv6AssignmentAuto{},
 									},
 								},
 							},
-						},
+						}
+					default:
+						continue
+					}
+
+					params = append(params, oxide.InstanceNetworkInterfaceCreate{
+						Description: fmt.Sprintf(
+							"Managed by the Oxide Omni infrastructure provider (%s).",
+							ID,
+						),
+						IpConfig:   ipConfig,
+						Name:       oxide.Name(fmt.Sprintf("ni-%02d-%s", i, pctx.GetRequestID())),
+						SubnetName: val.SubnetName,
+						VpcName:    val.VPCName,
+					})
+				}
+
+				return oxide.InstanceNetworkInterfaceAttachment{
+					Value: oxide.InstanceNetworkInterfaceAttachmentCreate{
+						Params: params,
 					},
-				},
-			},
+				}
+			}(),
 			SshPublicKeys: []oxide.NameOrId{},
 			Start:         new(true),
 			UserData: base64.StdEncoding.EncodeToString(
@@ -434,6 +515,11 @@ func (p *Provisioner) Deprovision(
 		zap.String("oxide.instance.id", instance.Id),
 	)
 
+	disks, err := p.oxideClient.InstanceDiskList(ctx, oxide.InstanceDiskListParams{
+		Project:  oxide.NameOrId(machineClass.Project),
+		Instance: oxide.NameOrId(req.Metadata().ID()),
+	})
+
 	logger.Info("stopping oxide instance")
 
 	if _, err := p.oxideClient.InstanceStop(ctx, oxide.InstanceStopParams{
@@ -458,7 +544,8 @@ func (p *Provisioner) Deprovision(
 		}
 
 		instance, err := p.oxideClient.InstanceView(stopCtx, oxide.InstanceViewParams{
-			Instance: oxide.NameOrId(instance.Id),
+			Project:  oxide.NameOrId(machineClass.Project),
+			Instance: oxide.NameOrId(req.Metadata().ID()),
 		})
 		if err != nil {
 			logger.Error("failed refreshing oxide instance state", zap.Error(err))
@@ -483,29 +570,24 @@ func (p *Provisioner) Deprovision(
 
 	logger.Info("deleted oxide instance")
 
-	if instance.BootDiskId == "" {
-		logger.Info("oxide instance has no boot disk, nothing to delete")
-		return nil
-	}
+	logger.Info("deleting instance disks")
 
-	logger = logger.With(
-		zap.String("oxide.instance.boot_disk_id", instance.BootDiskId),
-	)
-
-	logger.Info("deprovisioning boot disk")
-
-	if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
-		Disk: oxide.NameOrId(instance.BootDiskId),
-	}); err != nil {
-		if !strings.Contains(err.Error(), "404") {
-			logger.Error("failed deleting oxide boot disk", zap.Error(err))
-			return fmt.Errorf("failed deleting oxide boot disk: %w", err)
+	for _, disk := range disks.Items {
+		if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
+			Disk: oxide.NameOrId(disk.Id),
+		}); err != nil {
+			logger.Error("failed deleting instance disk",
+				zap.Error(err),
+				zap.String("oxide.instance.disk.id", disk.Id),
+				zap.String("oxide.instance.disk.name", string(disk.Name)),
+			)
 		}
-		logger.Info("oxide boot disk already deleted")
-		return nil
-	}
 
-	logger.Info("deleted oxide boot disk")
+		logger.Info("successfully delete instance disk",
+			zap.String("oxide.instance.disk.id", disk.Id),
+			zap.String("oxide.instance.disk.name", string(disk.Name)),
+		)
+	}
 
 	return nil
 }
