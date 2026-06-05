@@ -5,7 +5,7 @@
       "type": "string",
       "description": "Oxide project where machines will be created."
     },
-    "ncpus": {
+    "cpus": {
       "type": "integer",
       "description": "Number of vCPUs to assign to the machine.",
       "default": 1,
@@ -23,9 +23,9 @@
       "default": 10,
       "minimum": 1
     },
-    "data_disks": {
+    "disks": {
       "type": "array",
-      "description": "Additional data disks to attach to the machine. Each disk is created blank and attached at instance creation time.",
+      "description": "Additional disks to attach to the machine. Each disk is created blank and attached at instance creation time.",
       "default": [],
       "items": {
         "type": "object",
@@ -37,7 +37,7 @@
           },
           "size": {
             "type": "integer",
-            "description": "Data disk size, in gibibytes.",
+            "description": "Disk size, in gibibytes.",
             "minimum": 1
           }
         },

@@ -240,12 +240,24 @@ func (p *Provisioner) ensureInstance(
 	})
 	if err != nil {
 		logger.Error("failed viewing oxide image during instance create", zap.Error(err))
-		return fmt.Errorf("failed viewing oxide image: %w", err)
+		return fmt.Errorf("failed viewing oxide image during instance create: %w", err)
 	}
 
 	logger = logger.With(
 		zap.String("oxide.image.id", image.Id),
 	)
+
+	disks, err := machineClassToOxideDisks(pctx, machineClass)
+	if err != nil {
+		logger.Error("failed parsing machine class into oxide disks", zap.Error(err))
+		return fmt.Errorf("failed parsing machine class into oxide disks: %w", err)
+	}
+
+	networkInterfaces, err := machineClassToOxideNetworkInterfaces(pctx, machineClass)
+	if err != nil {
+		logger.Error("failed parsing machine class into oxide network interfaces", zap.Error(err))
+		return fmt.Errorf("failed parsing machine class into oxide network interfaces: %w", err)
+	}
 
 	params := oxide.InstanceCreateParams{
 		Project: oxide.NameOrId(machineClass.Project),
@@ -282,107 +294,15 @@ func (p *Provisioner) ensureInstance(
 				"Managed by the Oxide Omni infrastructure provider (%s).",
 				ID,
 			),
-			Disks: func() []oxide.InstanceDiskAttachment {
-				attachments := make([]oxide.InstanceDiskAttachment, 0)
-
-				for i, dd := range machineClass.DataDisks {
-					var backend oxide.DiskBackend
-					switch dd.Type {
-					case oxide.DiskBackendTypeLocal:
-						backend = oxide.DiskBackend{Value: &oxide.DiskBackendLocal{}}
-					case oxide.DiskBackendTypeDistributed:
-						backend = oxide.DiskBackend{
-							Value: &oxide.DiskBackendDistributed{
-								DiskSource: oxide.DiskSource{
-									Value: &oxide.DiskSourceBlank{BlockSize: 4096},
-								},
-							},
-						}
-					default:
-						continue
-					}
-
-					attachments = append(attachments, oxide.InstanceDiskAttachment{
-						Value: &oxide.InstanceDiskAttachmentCreate{
-							Description: fmt.Sprintf(
-								"Managed by the Oxide Omni infrastructure provider (%s).",
-								ID,
-							),
-							DiskBackend: backend,
-							Name:        oxide.Name(fmt.Sprintf("data-%02d-%s", i, pctx.GetRequestID())),
-							Size:        dd.Size * 1024 * 1024 * 1024,
-						},
-					})
-				}
-
-				return attachments
-			}(),
-			ExternalIps: []oxide.ExternalIpCreate{},
-			Hostname:    oxide.Hostname(pctx.GetRequestID()),
-			Memory:      machineClass.Memory * 1024 * 1024 * 1024,
-			Name:        oxide.Name(pctx.GetRequestID()),
-			Ncpus:       machineClass.NCPUS,
-			NetworkInterfaces: func() oxide.InstanceNetworkInterfaceAttachment {
-				params := make([]oxide.InstanceNetworkInterfaceCreate, 0)
-
-				for i, val := range machineClass.NetworkInterfaces {
-					var ipConfig oxide.PrivateIpStackCreate
-					switch val.IPConfig {
-					case oxide.PrivateIpConfigTypeV4:
-						ipConfig.Value = oxide.PrivateIpStackCreateV4{
-							Value: oxide.PrivateIpv4StackCreate{
-								Ip: oxide.Ipv4Assignment{
-									Value: oxide.Ipv4AssignmentAuto{},
-								},
-							},
-						}
-					case oxide.PrivateIpConfigTypeV6:
-						ipConfig.Value = oxide.PrivateIpStackCreateV6{
-							Value: oxide.PrivateIpv6StackCreate{
-								Ip: oxide.Ipv6Assignment{
-									Value: oxide.Ipv6AssignmentAuto{},
-								},
-							},
-						}
-					case oxide.PrivateIpConfigTypeDualStack:
-						ipConfig.Value = oxide.PrivateIpStackCreateDualStack{
-							Value: oxide.PrivateIpStackCreateDualStackValue{
-								V4: oxide.PrivateIpv4StackCreate{
-									Ip: oxide.Ipv4Assignment{
-										Value: oxide.Ipv4AssignmentAuto{},
-									},
-								},
-								V6: oxide.PrivateIpv6StackCreate{
-									Ip: oxide.Ipv6Assignment{
-										Value: oxide.Ipv6AssignmentAuto{},
-									},
-								},
-							},
-						}
-					default:
-						continue
-					}
-
-					params = append(params, oxide.InstanceNetworkInterfaceCreate{
-						Description: fmt.Sprintf(
-							"Managed by the Oxide Omni infrastructure provider (%s).",
-							ID,
-						),
-						IpConfig:   ipConfig,
-						Name:       oxide.Name(fmt.Sprintf("ni-%02d-%s", i, pctx.GetRequestID())),
-						SubnetName: val.SubnetName,
-						VpcName:    val.VPCName,
-					})
-				}
-
-				return oxide.InstanceNetworkInterfaceAttachment{
-					Value: oxide.InstanceNetworkInterfaceAttachmentCreate{
-						Params: params,
-					},
-				}
-			}(),
-			SshPublicKeys: []oxide.NameOrId{},
-			Start:         new(true),
+			Disks:             disks,
+			ExternalIps:       []oxide.ExternalIpCreate{},
+			Hostname:          oxide.Hostname(pctx.GetRequestID()),
+			Memory:            machineClass.Memory * 1024 * 1024 * 1024,
+			Name:              oxide.Name(pctx.GetRequestID()),
+			Ncpus:             machineClass.CPUS,
+			NetworkInterfaces: networkInterfaces,
+			SshPublicKeys:     []oxide.NameOrId{},
+			Start:             new(true),
 			UserData: base64.StdEncoding.EncodeToString(
 				[]byte(pctx.ConnectionParams.JoinConfig),
 			),
@@ -457,7 +377,7 @@ func (p *Provisioner) ensureProviderID(
 	if err != nil {
 		logger.Error("failed marshaling providerID patch", zap.Error(err))
 		return fmt.Errorf(
-			"failed marshaling provider id patch: %w", err,
+			"failed marshaling providerID patch: %w", err,
 		)
 	}
 
@@ -592,6 +512,112 @@ func (p *Provisioner) Deprovision(
 	return nil
 }
 
+func machineClassToOxideDisks(
+	pctx provision.Context[*Machine],
+	machineClass MachineClass,
+) ([]oxide.InstanceDiskAttachment, error) {
+	attachments := make([]oxide.InstanceDiskAttachment, 0)
+
+	for i, dd := range machineClass.Disks {
+		var backend oxide.DiskBackend
+		switch dd.Type {
+		case oxide.DiskBackendTypeLocal:
+			backend = oxide.DiskBackend{Value: &oxide.DiskBackendLocal{}}
+		case oxide.DiskBackendTypeDistributed:
+			backend = oxide.DiskBackend{
+				Value: &oxide.DiskBackendDistributed{
+					DiskSource: oxide.DiskSource{
+						Value: &oxide.DiskSourceBlank{BlockSize: 4096},
+					},
+				},
+			}
+		default:
+			return nil, fmt.Errorf("disks[%d].type has invalid value %s", i, dd.Type)
+		}
+
+		attachments = append(attachments, oxide.InstanceDiskAttachment{
+			Value: &oxide.InstanceDiskAttachmentCreate{
+				Description: fmt.Sprintf(
+					"Managed by the Oxide Omni infrastructure provider (%s).",
+					ID,
+				),
+				DiskBackend: backend,
+				Name:        oxide.Name(fmt.Sprintf("data-%02d-%s", i, pctx.GetRequestID())),
+				Size:        dd.Size * 1024 * 1024 * 1024,
+			},
+		})
+	}
+
+	return attachments, nil
+}
+
+func machineClassToOxideNetworkInterfaces(
+	pctx provision.Context[*Machine],
+	machineClass MachineClass,
+) (oxide.InstanceNetworkInterfaceAttachment, error) {
+	params := make([]oxide.InstanceNetworkInterfaceCreate, 0)
+
+	for i, ni := range machineClass.NetworkInterfaces {
+		var ipConfig oxide.PrivateIpStackCreate
+		switch ni.IPConfig {
+		case oxide.PrivateIpConfigTypeV4:
+			ipConfig.Value = oxide.PrivateIpStackCreateV4{
+				Value: oxide.PrivateIpv4StackCreate{
+					Ip: oxide.Ipv4Assignment{
+						Value: oxide.Ipv4AssignmentAuto{},
+					},
+				},
+			}
+		case oxide.PrivateIpConfigTypeV6:
+			ipConfig.Value = oxide.PrivateIpStackCreateV6{
+				Value: oxide.PrivateIpv6StackCreate{
+					Ip: oxide.Ipv6Assignment{
+						Value: oxide.Ipv6AssignmentAuto{},
+					},
+				},
+			}
+		case oxide.PrivateIpConfigTypeDualStack:
+			ipConfig.Value = oxide.PrivateIpStackCreateDualStack{
+				Value: oxide.PrivateIpStackCreateDualStackValue{
+					V4: oxide.PrivateIpv4StackCreate{
+						Ip: oxide.Ipv4Assignment{
+							Value: oxide.Ipv4AssignmentAuto{},
+						},
+					},
+					V6: oxide.PrivateIpv6StackCreate{
+						Ip: oxide.Ipv6Assignment{
+							Value: oxide.Ipv6AssignmentAuto{},
+						},
+					},
+				},
+			}
+		default:
+			return oxide.InstanceNetworkInterfaceAttachment{}, fmt.Errorf(
+				"network_interfaces[%d].ip_config has invalid value %s",
+				i,
+				ni.IPConfig,
+			)
+		}
+
+		params = append(params, oxide.InstanceNetworkInterfaceCreate{
+			Description: fmt.Sprintf(
+				"Managed by the Oxide Omni infrastructure provider (%s).",
+				ID,
+			),
+			IpConfig:   ipConfig,
+			Name:       oxide.Name(fmt.Sprintf("iface-%02d-%s", i, pctx.GetRequestID())),
+			SubnetName: ni.SubnetName,
+			VpcName:    ni.VPCName,
+		})
+	}
+
+	return oxide.InstanceNetworkInterfaceAttachment{
+		Value: oxide.InstanceNetworkInterfaceAttachmentCreate{
+			Params: params,
+		},
+	}, nil
+}
+
 // roundToNearestGibibyte rounds n up to the nearest multiple of 1 GiB.
 func roundToNearestGibibyte(n int64) int64 {
 	const Gibibyte = 1024 * 1024 * 1024
@@ -723,7 +749,7 @@ func downloadImageToTempFile(
 		logger.Error("failed decompressing talos image",
 			zap.Error(err),
 		)
-		return nil, fmt.Errorf("failed decompressing image: %w", err)
+		return nil, fmt.Errorf("failed decompressing talos image: %w", err)
 	}
 
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
@@ -783,7 +809,7 @@ func createOxideImage(
 	})
 	if err != nil {
 		logger.Error("failed creating scratch disk", zap.Error(err))
-		return fmt.Errorf("failed creating disk: %w", err)
+		return fmt.Errorf("failed creating scratch disk: %w", err)
 	}
 
 	defer func() {
@@ -830,7 +856,7 @@ func createOxideImage(
 		r,
 	); err != nil {
 		logger.Error("failed importing bytes to scratch disk", zap.Error(err))
-		return fmt.Errorf("failed importing bytes to disk: %w", err)
+		return fmt.Errorf("failed importing bytes to scratch disk: %w", err)
 	}
 
 	logger.Info("completed bulk import to scratch disk",
@@ -843,7 +869,7 @@ func createOxideImage(
 	})
 	if err != nil {
 		logger.Error("failed viewing scratch snapshot", zap.Error(err))
-		return fmt.Errorf("failed viewing snapshot: %w", err)
+		return fmt.Errorf("failed viewing scratch snapshot: %w", err)
 	}
 
 	image, err := client.ImageCreate(ctx, oxide.ImageCreateParams{
@@ -871,7 +897,7 @@ func createOxideImage(
 		// cleaned up via the deferred deletes above.
 		if !strings.Contains(err.Error(), "409") {
 			logger.Error("failed creating oxide image", zap.Error(err))
-			return fmt.Errorf("failed creating image: %w", err)
+			return fmt.Errorf("failed creating oxide image: %w", err)
 		}
 		logger.Info("oxide image already exists, skipping creation",
 			zap.Duration("duration", time.Since(createStart)),
