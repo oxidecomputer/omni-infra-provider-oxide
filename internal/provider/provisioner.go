@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oxidecomputer/omni-infra-provider-oxide/internal/provider/spec"
 	"github.com/oxidecomputer/oxide.go/oxide"
 	"github.com/siderolabs/omni/client/pkg/constants"
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
@@ -217,7 +218,7 @@ func (p *Provisioner) ensureInstance(
 			zap.String("oxide.instance.id", instance.Id),
 			zap.String("oxide.instance.run_state", string(instance.RunState)),
 		)
-		return nil
+		return p.recordMachineState(ctx, logger, pctx, machineClass)
 	case !strings.Contains(err.Error(), "404"):
 		logger.Error("failed viewing oxide instance", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
@@ -264,9 +265,11 @@ func (p *Provisioner) ensureInstance(
 		Body: &oxide.InstanceCreate{
 			AntiAffinityGroups: func() []oxide.NameOrId {
 				var antiAffinityGroups []oxide.NameOrId
-				for _, val := range machineClass.AntiAffinityGroups {
-					antiAffinityGroups = append(antiAffinityGroups, val)
-				}
+				antiAffinityGroups = append(
+					antiAffinityGroups,
+					machineClass.AntiAffinityGroups...,
+				)
+
 				return antiAffinityGroups
 			}(),
 			AutoRestartPolicy: machineClass.AutoRestartPolicy,
@@ -319,6 +322,58 @@ func (p *Provisioner) ensureInstance(
 
 	logger.Info("created oxide instance",
 		zap.String("oxide.instance.id", instance.Id),
+	)
+
+	return p.recordMachineState(ctx, logger, pctx, machineClass)
+}
+
+// recordMachineState records the Oxide resources created for a machine. This
+// keeps deprovisioning idempotent even after the instance is deleted and Oxide
+// can no longer list the disks that were attached to it.
+func (p *Provisioner) recordMachineState(
+	ctx context.Context,
+	logger *zap.Logger,
+	pctx provision.Context[*Machine],
+	machineClass MachineClass,
+) error {
+	instance, err := p.oxideClient.InstanceView(ctx, oxide.InstanceViewParams{
+		Project:  machineClass.Project,
+		Instance: oxide.NameOrId(pctx.GetRequestID()),
+	})
+	if err != nil {
+		logger.Error("failed viewing oxide instance", zap.Error(err))
+		return fmt.Errorf("failed viewing oxide instance: %w", err)
+	}
+
+	disks, err := p.oxideClient.InstanceDiskList(ctx, oxide.InstanceDiskListParams{
+		Project:  machineClass.Project,
+		Instance: oxide.NameOrId(pctx.GetRequestID()),
+	})
+	if err != nil {
+		logger.Error("failed listing oxide instance disks", zap.Error(err))
+		return fmt.Errorf("failed listing oxide instance disks: %w", err)
+	}
+
+	state := pctx.State.TypedSpec()
+	state.Value.Project = &spec.Project{
+		Id:   instance.ProjectId,
+		Name: string(machineClass.Project),
+	}
+	state.Value.Instance = &spec.Instance{
+		Id:   instance.Id,
+		Name: string(instance.Name),
+	}
+	state.Value.Disks = make([]*spec.Disk, 0, len(disks.Items))
+
+	for _, disk := range disks.Items {
+		state.Value.Disks = append(state.Value.Disks, &spec.Disk{
+			Id:   disk.Id,
+			Name: string(disk.Name),
+		})
+	}
+
+	logger.Info("recorded oxide machine state",
+		zap.Any("state", state.Value),
 	)
 
 	return nil
@@ -401,115 +456,149 @@ func (p *Provisioner) Deprovision(
 	machine *Machine,
 	req *infra.MachineRequest,
 ) error {
-	var machineClass MachineClass
-	if err := yaml.Unmarshal(
-		[]byte(req.TypedSpec().Value.ProviderData),
-		&machineClass,
-	); err != nil {
-		logger.Error("failed unmarshaling provider data", zap.Error(err))
-		return fmt.Errorf("failed unmarshaling provider data: %w", err)
+	state := machine.TypedSpec()
+
+	// We don't have any state, either because [ProvisionSteps] was cancelled early
+	// or a previous version of this code did not publish any state. Either way,
+	// warn the user and return nil so the provider doesn't retry [Deprovision].
+	if state.Value == nil {
+		logger.Warn("machine provider state is empty")
+		return nil
 	}
 
 	logger = logger.With(
 		zap.String("omni.request.id", req.Metadata().ID()),
-		zap.Any("omni.machine_class", machineClass),
-		zap.String("oxide.instance.name", req.Metadata().ID()),
+		zap.Any("state", state.Value),
 	)
 
-	logger.Info("deprovisioning machine")
+	var errs []error
 
+	if state.Value.Instance != nil && state.Value.Instance.Id != "" {
+		logger.Info("deprovisioning oxide instance",
+			zap.String("oxide.instance.id", state.Value.Instance.Id),
+		)
+
+		if err := p.deprovisionInstance(ctx, state.Value.Instance); err != nil {
+			errs = append(errs, fmt.Errorf("failed deprovisioning instance: %w", err))
+		}
+	} else {
+		logger.Warn("machine provider state does not contain instance, skipping deprovision")
+	}
+
+	disks := make([]*spec.Disk, 0, len(state.Value.Disks))
+	for i, disk := range state.Value.Disks {
+		if disk == nil || disk.Id == "" {
+			logger.Warn("machine provider state is missing disk id",
+				zap.Int("index", i),
+			)
+			continue
+		}
+
+		disks = append(disks, disk)
+	}
+
+	if len(disks) != 0 {
+		logger.Info("deprovisioning oxide disks",
+			zap.Int("oxide.disk.count", len(disks)),
+		)
+
+		if err := p.deprovisionDisks(ctx, disks); err != nil {
+			errs = append(errs, fmt.Errorf("failed deprovisioning disks: %w", err))
+		}
+	} else {
+		logger.Warn("machine provider state does not contain disks, skipping deprovision")
+	}
+
+	return errors.Join(errs...)
+}
+
+func (p *Provisioner) deprovisionInstance(
+	ctx context.Context,
+	instanceSpec *spec.Instance,
+) error {
 	instance, err := p.oxideClient.InstanceView(ctx, oxide.InstanceViewParams{
-		Project:  oxide.NameOrId(machineClass.Project),
-		Instance: oxide.NameOrId(req.Metadata().ID()),
+		Instance: oxide.NameOrId(instanceSpec.Id),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
-			logger.Info("oxide instance not found, already deleted")
 			return nil
 		}
-		logger.Error("failed viewing oxide instance", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
 
-	logger = logger.With(
-		zap.String("oxide.instance.id", instance.Id),
-	)
+	if instance.RunState != oxide.InstanceStateStopped {
+		if _, err := p.oxideClient.InstanceStop(ctx, oxide.InstanceStopParams{
+			Instance: oxide.NameOrId(instanceSpec.Id),
+		}); err != nil {
+			if strings.Contains(err.Error(), "404") {
+				return nil
+			}
 
-	disks, err := p.oxideClient.InstanceDiskList(ctx, oxide.InstanceDiskListParams{
-		Project:  oxide.NameOrId(machineClass.Project),
-		Instance: oxide.NameOrId(req.Metadata().ID()),
-	})
-
-	logger.Info("stopping oxide instance")
-
-	if _, err := p.oxideClient.InstanceStop(ctx, oxide.InstanceStopParams{
-		Instance: oxide.NameOrId(instance.Id),
-	}); err != nil {
-		logger.Error("failed stopping oxide instance", zap.Error(err))
-		return fmt.Errorf("failed stopping oxide instance: %w", err)
-	}
-
-	stopCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stopCtx.Done():
-			logger.Error("timed out waiting for instance to stop", zap.Error(stopCtx.Err()))
-			return fmt.Errorf("timed out waiting for instance to stop: %w", stopCtx.Err())
-		case <-ticker.C:
+			return fmt.Errorf("failed stopping oxide instance: %w", err)
 		}
 
-		instance, err := p.oxideClient.InstanceView(stopCtx, oxide.InstanceViewParams{
-			Project:  oxide.NameOrId(machineClass.Project),
-			Instance: oxide.NameOrId(req.Metadata().ID()),
-		})
-		if err != nil {
-			logger.Error("failed refreshing oxide instance state", zap.Error(err))
-			return fmt.Errorf("failed refreshing oxide instance state: %w", err)
-		}
+		stopCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
 
-		if instance.RunState == oxide.InstanceStateStopped {
-			break
-		}
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
 
-		logger.Info("waiting for instance to stop",
-			zap.String("oxide.instance.run_state", string(instance.RunState)),
-		)
+		for {
+			select {
+			case <-stopCtx.Done():
+				return fmt.Errorf("timed out waiting for instance to stop: %w", stopCtx.Err())
+			case <-ticker.C:
+			}
+
+			instance, err := p.oxideClient.InstanceView(stopCtx, oxide.InstanceViewParams{
+				Instance: oxide.NameOrId(instanceSpec.Id),
+			})
+			if err != nil {
+				if strings.Contains(err.Error(), "404") {
+					return nil
+				}
+
+				return fmt.Errorf("failed refreshing oxide instance state: %w", err)
+			}
+
+			if instance.RunState == oxide.InstanceStateStopped {
+				break
+			}
+		}
 	}
 
 	if err := p.oxideClient.InstanceDelete(ctx, oxide.InstanceDeleteParams{
-		Instance: oxide.NameOrId(instance.Id),
+		Instance: oxide.NameOrId(instanceSpec.Id),
 	}); err != nil {
-		logger.Error("failed deleting oxide instance", zap.Error(err))
+		if strings.Contains(err.Error(), "404") {
+			return nil
+		}
+
 		return fmt.Errorf("failed deleting oxide instance: %w", err)
 	}
 
-	logger.Info("deleted oxide instance")
+	return nil
+}
 
-	logger.Info("deleting instance disks")
+func (p *Provisioner) deprovisionDisks(
+	ctx context.Context,
+	diskSpec []*spec.Disk,
+) error {
+	var errs []error
 
-	for _, disk := range disks.Items {
+	for _, disk := range diskSpec {
 		if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
 			Disk: oxide.NameOrId(disk.Id),
 		}); err != nil {
-			logger.Error("failed deleting instance disk",
-				zap.Error(err),
-				zap.String("oxide.instance.disk.id", disk.Id),
-				zap.String("oxide.instance.disk.name", string(disk.Name)),
-			)
+			if strings.Contains(err.Error(), "404") {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("failed deleting oxide disk %s: %w", disk.Id, err))
+			continue
 		}
-
-		logger.Info("successfully delete instance disk",
-			zap.String("oxide.instance.disk.id", disk.Id),
-			zap.String("oxide.instance.disk.name", string(disk.Name)),
-		)
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func machineClassToOxideDisks(

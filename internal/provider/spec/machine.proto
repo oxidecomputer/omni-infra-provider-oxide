@@ -4,7 +4,29 @@ package oxide.provider.spec;
 option go_package = "github.com/oxidecomputer/omni-infra-provider-oxide/internal/provider/spec";
 
 // Machine is the per-request state the infrastructure provider persists between
-// provisioning steps. It's intentionally empty. Each step is idempotent on
-// its own by querying the Oxide API for the current state of its resources, so
-// there's nothing the provider needs to remember.
-message Machine {}
+// provisioning steps. It records the Oxide resources created for the machine so
+// deprovisioning can remain idempotent after parent-child relationships are
+// removed from Oxide.
+message Machine {
+  Project project = 1;
+  Instance instance = 2;
+  repeated Disk disks = 3;
+}
+
+// Project identifies the Oxide project the machine was created in.
+message Project {
+  string id = 1;
+  string name = 2;
+}
+
+// Instance identifies the Oxide instance created for the machine.
+message Instance {
+  string id = 1;
+  string name = 2;
+}
+
+// Disk identifies an Oxide disk created for the machine.
+message Disk {
+  string id = 1;
+  string name = 2;
+}
