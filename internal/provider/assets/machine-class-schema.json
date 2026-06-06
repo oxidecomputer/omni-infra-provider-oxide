@@ -93,7 +93,11 @@
   },
   "required": [
     "project",
+    "cpus",
+    "memory",
     "boot_disk_size",
-    "network_interfaces"
+    "network_interfaces",
+    "auto_restart_policy",
+    "cpu_platform"
   ]
 }
