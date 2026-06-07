@@ -288,7 +288,7 @@ func (p *Provisioner) ensureInstance(
 							},
 						},
 					},
-					Name: oxide.Name(fmt.Sprintf("talos-%s", pctx.GetRequestID())),
+					Name: oxide.Name(pctx.GetRequestID()),
 					Size: oxide.ByteCount(machineClass.BootDiskSize * 1024 * 1024 * 1024),
 				},
 			},
@@ -631,7 +631,7 @@ func machineClassToOxideDisks(
 					ID,
 				),
 				DiskBackend: backend,
-				Name:        oxide.Name(fmt.Sprintf("data-%02d-%s", i, pctx.GetRequestID())),
+				Name:        oxide.Name(fmt.Sprintf("disk-%02d-%s", i, pctx.GetRequestID())),
 				Size:        dd.Size * 1024 * 1024 * 1024,
 			},
 		})
