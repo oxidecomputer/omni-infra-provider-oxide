@@ -1,5 +1,5 @@
 VERSION ?= v0.4.0
-GO_CONTAINER_IMAGE ?= docker.io/golang:1.26.2
+GO_CONTAINER_IMAGE ?= docker.io/golang:1.26.3
 
 # Set this to non-empty when building and pushing a release.
 RELEASE ?=
