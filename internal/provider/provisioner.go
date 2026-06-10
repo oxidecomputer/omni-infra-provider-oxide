@@ -298,6 +298,7 @@ func (p *Provisioner) ensureInstance(
 				ID,
 			),
 			Disks:             disks,
+			EnableJumboFrames: machineClass.EnableJumboFrames,
 			ExternalIps:       []oxide.ExternalIpCreate{},
 			Hostname:          oxide.Hostname(pctx.GetRequestID()),
 			Memory:            machineClass.Memory * 1024 * 1024 * 1024,
