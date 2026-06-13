@@ -4,7 +4,6 @@ The Oxide Omni infrastructure provider is used to provision Talos Linux
 instances on Oxide and connect those instances to Omni where they will be
 configured as nodes in a Kubernetes cluster.
 
-
 == Usage
 
 Please note the following before using the Oxide Omni infrastructure provider.
@@ -62,55 +61,6 @@ docker run --rm \
 
 == Development
 
-The `Makefile` is the primary method of interfacing with this project. Refer to
-its targets for more information. The build artifact is a container image to be
-run wherever it'll have access to the Oxide silo it's configured to connect to.
-
-=== Running Locally
-
-. Export the necessary environment variables.
-+
-[source,shell]
-----
-export OMNI_ENDPOINT=https://example.na-west-1.omni.siderolabs.io:443
-export OMNI_SERVICE_ACCOUNT_KEY=ZXhhbXBsZQ==
-export OXIDE_HOST='https://oxide.sys.example.com'
-export OXIDE_TOKEN='oxide-token-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
-----
-
-. Run the infrastructure provider.
-+
-[source,shell]
-----
-make dev
-----
-
-== Release Process
-
-The release process is manual and runs from a developer's workstation for now.
-
-. Check out the revision to be released. Ensure the working copy is clean.
-
-. Build the container image.
-+
-[source,shell]
-----
-RELEASE=true make build
-----
-
-. Push the container image.
-+
-[source,shell]
-----
-RELEASE=true make push
-----
-
-. Create a GitHub release.
-
-.. Create and push a Git tag with the v-prefixed `VERSION` (e.g., v0.1.0).
-
-.. Create the GitHub release for the newly pushed tag. Automatically generate the release notes.
-
-. Open a pull request with the following changes.
-
-.. Update the `VERSION` within the `Makefile` to the next version.
+Please refer to link:CONTRIBUTING.adoc[`CONTRIBUTING.adoc`] for development
+information, including how to run the infrastructure provider locally, run the
+tests, and publish a release.
