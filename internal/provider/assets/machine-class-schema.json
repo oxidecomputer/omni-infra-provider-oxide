@@ -80,7 +80,7 @@
       "type": "string",
       "description": "CPU platform for the machine.",
       "default": "amd_milan",
-      "enum": ["amd_milan", "amd_turin"]
+      "enum": ["amd_milan", "amd_turin", "amd_turinv2"]
     },
     "anti_affinity_groups": {
       "type": "array",
@@ -89,6 +89,11 @@
       "items": {
         "type": "string"
       }
+    },
+    "enable_jumbo_frames": {
+      "type": "boolean",
+      "description": "Enable jumbo frames on the instance's primary network interface.",
+      "default": false
     }
   },
   "required": [

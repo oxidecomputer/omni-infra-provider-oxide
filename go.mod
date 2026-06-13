@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/ardanlabs/conf/v3 v3.9.0
 	github.com/cosi-project/runtime v1.16.0
-	github.com/oxidecomputer/oxide.go v0.9.0
+	github.com/oxidecomputer/oxide.go v0.10.0
 	github.com/siderolabs/omni/client v1.8.2
 	github.com/ulikunitz/xz v0.5.15
 	go.uber.org/zap v1.28.0

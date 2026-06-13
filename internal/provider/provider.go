@@ -42,6 +42,7 @@ type MachineClass struct {
 	AutoRestartPolicy  oxide.InstanceAutoRestartPolicy `json:"auto_restart_policy"  yaml:"auto_restart_policy"`
 	CPUPlatform        oxide.InstanceCpuPlatform       `json:"cpu_platform"         yaml:"cpu_platform"`
 	AntiAffinityGroups []oxide.NameOrId                `json:"anti_affinity_groups" yaml:"anti_affinity_groups"`
+	EnableJumboFrames  *bool                           `json:"enable_jumbo_frames"  yaml:"enable_jumbo_frames"`
 }
 
 // Validate ensures the machine class has the required values needed to create
@@ -65,33 +66,67 @@ func (mc MachineClass) Validate() error {
 		errs = append(errs, errors.New("boot_disk_size must be at least 1 GiB"))
 	}
 
-	if len(mc.NetworkInterfaces) == 0 {
-		errs = append(errs, errors.New("network_interfaces is required"))
+	if mc.CPUPlatform == "" {
+		errs = append(errs, errors.New("cpu_platform is required"))
+	} else {
+		switch mc.CPUPlatform {
+		case oxide.InstanceCpuPlatformAmdMilan,
+			oxide.InstanceCpuPlatformAmdTurin,
+			oxide.InstanceCpuPlatformAmdTurinV2:
+		default:
+			errs = append(errs, fmt.Errorf("cpu_platform must be one of [%s, %s, %s]",
+				oxide.InstanceCpuPlatformAmdMilan,
+				oxide.InstanceCpuPlatformAmdTurin,
+				oxide.InstanceCpuPlatformAmdTurinV2,
+			))
+		}
 	}
 
-	for i, ni := range mc.NetworkInterfaces {
-		if ni.IPConfig == "" {
-			errs = append(errs, fmt.Errorf("network_interfaces[%d].ip_config is required", i))
+	if mc.AutoRestartPolicy == "" {
+		errs = append(errs, errors.New("auto_restart_policy is required"))
+	} else {
+		switch mc.AutoRestartPolicy {
+		case oxide.InstanceAutoRestartPolicyBestEffort, oxide.InstanceAutoRestartPolicyNever:
+		default:
+			errs = append(errs, fmt.Errorf("auto_restart_policy must be one of [%s, %s]",
+				oxide.InstanceAutoRestartPolicyBestEffort,
+				oxide.InstanceAutoRestartPolicyNever,
+			))
 		}
+	}
 
-		if ni.IPConfig != oxide.PrivateIpConfigTypeV4 &&
-			ni.IPConfig != oxide.PrivateIpConfigTypeV6 &&
-			ni.IPConfig != oxide.PrivateIpConfigTypeDualStack {
-			errs = append(
-				errs,
-				fmt.Errorf(
-					"network_interfaces[%d].ip_config must be one of [v4, v6, dual_stack]",
-					i,
-				),
-			)
-		}
+	if len(mc.NetworkInterfaces) == 0 {
+		errs = append(errs, errors.New("network_interfaces is required"))
+	} else {
+		for i, ni := range mc.NetworkInterfaces {
+			if ni.IPConfig == "" {
+				errs = append(errs, fmt.Errorf("network_interfaces[%d].ip_config is required", i))
+			} else {
+				switch ni.IPConfig {
+				case oxide.PrivateIpConfigTypeV4,
+					oxide.PrivateIpConfigTypeV6,
+					oxide.PrivateIpConfigTypeDualStack:
+				default:
+					errs = append(
+						errs,
+						fmt.Errorf(
+							"network_interfaces[%d].ip_config must be one of [%s, %s, %s]",
+							i,
+							oxide.PrivateIpConfigTypeV4,
+							oxide.PrivateIpConfigTypeV6,
+							oxide.PrivateIpConfigTypeDualStack,
+						),
+					)
+				}
+			}
 
-		if ni.SubnetName == "" {
-			errs = append(errs, fmt.Errorf("network_interfaces[%d].subnet_name is required", i))
-		}
+			if ni.SubnetName == "" {
+				errs = append(errs, fmt.Errorf("network_interfaces[%d].subnet_name is required", i))
+			}
 
-		if ni.VPCName == "" {
-			errs = append(errs, fmt.Errorf("network_interfaces[%d].vpc_name is required", i))
+			if ni.VPCName == "" {
+				errs = append(errs, fmt.Errorf("network_interfaces[%d].vpc_name is required", i))
+			}
 		}
 	}
 
