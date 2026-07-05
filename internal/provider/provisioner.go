@@ -437,7 +437,8 @@ func (p *Provisioner) ensureProviderID(
 		)
 	}
 
-	if err := pctx.CreateConfigPatch(ctx, "providerID", b); err != nil {
+	patchName := fmt.Sprintf("provider-id-%s", pctx.GetRequestID())
+	if err := pctx.CreateConfigPatch(ctx, patchName, b); err != nil {
 		logger.Error("failed creating providerID config patch", zap.Error(err))
 		return fmt.Errorf(
 			"failed creating providerID config patch: %w", err,
