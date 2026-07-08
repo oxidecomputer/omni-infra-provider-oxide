@@ -26,6 +26,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const oxideNameMaxLength = 63
+
 // Ensure [Provisioner] implements the [provision.Provisioner] interface.
 var _ provision.Provisioner[*Machine] = (*Provisioner)(nil)
 
@@ -55,10 +57,113 @@ func NewProvisioner(oxideClient *oxide.Client) *Provisioner {
 // [Machine].
 func (p *Provisioner) ProvisionSteps() []provision.Step[*Machine] {
 	return []provision.Step[*Machine]{
+		provision.NewStep("validate_request", p.validateRequest),
 		provision.NewStep("ensure_image", p.ensureImage),
 		provision.NewStep("ensure_instance", p.ensureInstance),
 		provision.NewStep("ensure_provider_id", p.ensureProviderID),
 	}
+}
+
+// validateRequest validates Omni request values before any Oxide resources are
+// read or created.
+func (p *Provisioner) validateRequest(
+	_ context.Context,
+	_ *zap.Logger,
+	pctx provision.Context[*Machine],
+) error {
+	machineClass, err := machineClassFromContext(pctx)
+	if err != nil {
+		return fmt.Errorf("failed retrieving machine class from context: %w", err)
+	}
+
+	if err := validateRequestIDForOxideNames(
+		pctx.GetRequestID(),
+		machineClass,
+	); err != nil {
+		return fmt.Errorf("invalid machine request ID: %w", err)
+	}
+
+	return nil
+}
+
+func validateRequestIDForOxideNames(
+	requestID string,
+	machineClass MachineClass,
+) error {
+	var errs []error
+
+	if err := validateOxideName(requestID); err != nil {
+		errs = append(errs, fmt.Errorf("request ID %q is invalid: %w", requestID, err))
+	}
+
+	for _, name := range longestDerivedOxideNames(requestID, machineClass) {
+		if len(name) > oxideNameMaxLength {
+			errs = append(errs, fmt.Errorf(
+				"request ID %q is too long: derived Oxide name %q is %d characters, maximum is %d",
+				requestID,
+				name,
+				len(name),
+				oxideNameMaxLength,
+			))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func validateOxideName(name string) error {
+	switch {
+	case name == "":
+		return errors.New("must not be empty")
+	case len(name) > oxideNameMaxLength:
+		return fmt.Errorf(
+			"is %d characters, maximum is %d",
+			len(name),
+			oxideNameMaxLength,
+		)
+	case name[0] < 'a' || name[0] > 'z':
+		return errors.New("must start with a lowercase ASCII letter")
+	case name[len(name)-1] == '-':
+		return errors.New("must not end with a dash")
+	}
+
+	for i := range len(name) {
+		ch := name[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			continue
+		}
+
+		return errors.New("must contain only lowercase ASCII letters, digits, or dashes")
+	}
+
+	return nil
+}
+
+func longestDerivedOxideNames(
+	requestID string,
+	machineClass MachineClass,
+) []string {
+	names := make([]string, 0, 2)
+
+	if len(machineClass.Disks) > 0 {
+		lastDisk := len(machineClass.Disks) - 1
+		names = append(names, oxideDiskName(lastDisk, requestID))
+	}
+
+	if len(machineClass.NetworkInterfaces) > 0 {
+		lastInterface := len(machineClass.NetworkInterfaces) - 1
+		names = append(names, oxideNetworkInterfaceName(lastInterface, requestID))
+	}
+
+	return names
+}
+
+func oxideDiskName(index int, requestID string) string {
+	return fmt.Sprintf("disk-%02d-%s", index, requestID)
+}
+
+func oxideNetworkInterfaceName(index int, requestID string) string {
+	return fmt.Sprintf("iface-%02d-%s", index, requestID)
 }
 
 // machineClassFromContext unmarshals the provider data from the
@@ -633,7 +738,7 @@ func machineClassToOxideDisks(
 					ID,
 				),
 				DiskBackend: backend,
-				Name:        oxide.Name(fmt.Sprintf("disk-%02d-%s", i, pctx.GetRequestID())),
+				Name:        oxide.Name(oxideDiskName(i, pctx.GetRequestID())),
 				Size:        dd.Size * 1024 * 1024 * 1024,
 			},
 		})
@@ -696,7 +801,7 @@ func machineClassToOxideNetworkInterfaces(
 				ID,
 			),
 			IpConfig:   ipConfig,
-			Name:       oxide.Name(fmt.Sprintf("iface-%02d-%s", i, pctx.GetRequestID())),
+			Name:       oxide.Name(oxideNetworkInterfaceName(i, pctx.GetRequestID())),
 			SubnetName: ni.SubnetName,
 			VpcName:    ni.VPCName,
 		})
