@@ -226,7 +226,7 @@ func (p *Provisioner) ensureImage(
 			zap.String("oxide.image.id", existingImage.Id),
 		)
 		return nil
-	case !strings.Contains(err.Error(), "404"):
+	case !errors.Is(err, oxide.ErrObjectNotFound):
 		logger.Error("failed viewing oxide image", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide image: %w", err)
 	}
@@ -324,7 +324,7 @@ func (p *Provisioner) ensureInstance(
 			zap.String("oxide.instance.run_state", string(instance.RunState)),
 		)
 		return p.recordMachineState(ctx, logger, pctx, machineClass)
-	case !strings.Contains(err.Error(), "404"):
+	case !errors.Is(err, oxide.ErrObjectNotFound):
 		logger.Error("failed viewing oxide instance", zap.Error(err))
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
@@ -627,7 +627,7 @@ func (p *Provisioner) deprovisionInstance(
 		Instance: oxide.NameOrId(instanceSpec.Id),
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if errors.Is(err, oxide.ErrObjectNotFound) {
 			return nil
 		}
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
@@ -637,7 +637,7 @@ func (p *Provisioner) deprovisionInstance(
 		if _, err := p.oxideClient.InstanceStop(ctx, oxide.InstanceStopParams{
 			Instance: oxide.NameOrId(instanceSpec.Id),
 		}); err != nil {
-			if strings.Contains(err.Error(), "404") {
+			if errors.Is(err, oxide.ErrObjectNotFound) {
 				return nil
 			}
 
@@ -661,7 +661,7 @@ func (p *Provisioner) deprovisionInstance(
 				Instance: oxide.NameOrId(instanceSpec.Id),
 			})
 			if err != nil {
-				if strings.Contains(err.Error(), "404") {
+				if errors.Is(err, oxide.ErrObjectNotFound) {
 					return nil
 				}
 
@@ -677,7 +677,7 @@ func (p *Provisioner) deprovisionInstance(
 	if err := p.oxideClient.InstanceDelete(ctx, oxide.InstanceDeleteParams{
 		Instance: oxide.NameOrId(instanceSpec.Id),
 	}); err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if errors.Is(err, oxide.ErrObjectNotFound) {
 			return nil
 		}
 
@@ -697,7 +697,7 @@ func (p *Provisioner) deprovisionDisks(
 		if err := p.oxideClient.DiskDelete(ctx, oxide.DiskDeleteParams{
 			Disk: oxide.NameOrId(disk.Id),
 		}); err != nil {
-			if strings.Contains(err.Error(), "404") {
+			if errors.Is(err, oxide.ErrObjectNotFound) {
 				continue
 			}
 			errs = append(errs, fmt.Errorf("failed deleting oxide disk %s: %w", disk.Id, err))
@@ -1017,7 +1017,7 @@ func createOxideImage(
 		// the expected success case and should not be logged as an error.
 		if err := client.DiskDelete(cleanupCtx, oxide.DiskDeleteParams{
 			Disk: oxide.NameOrId(disk.Id),
-		}); err != nil && !strings.Contains(err.Error(), "404") {
+		}); err != nil && !errors.Is(err, oxide.ErrObjectNotFound) {
 			logger.Error("failed deleting temporary disk", zap.Error(err))
 		}
 	}()
@@ -1032,7 +1032,7 @@ func createOxideImage(
 		if err := client.SnapshotDelete(cleanupCtx, oxide.SnapshotDeleteParams{
 			Snapshot: oxide.NameOrId(talosImage.Name),
 			Project:  oxide.NameOrId(machineClass.Project),
-		}); err != nil && !strings.Contains(err.Error(), "404") {
+		}); err != nil && !errors.Is(err, oxide.ErrObjectNotFound) {
 			logger.Error("failed deleting temporary snapshot", zap.Error(err))
 		}
 	}()
@@ -1091,7 +1091,7 @@ func createOxideImage(
 		// the same name. Treat that as a successful no-op since the image content
 		// is deterministic for a given name. Our scratch disk and snapshot still get
 		// cleaned up via the deferred deletes above.
-		if !strings.Contains(err.Error(), "409") {
+		if !errors.Is(err, oxide.ErrObjectAlreadyExists) {
 			logger.Error("failed creating oxide image", zap.Error(err))
 			return fmt.Errorf("failed creating oxide image: %w", err)
 		}
