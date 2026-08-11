@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +28,8 @@ import (
 )
 
 const oxideNameMaxLength = 63
+
+const gibibyte = 1 << 30
 
 // Ensure [Provisioner] implements the [provision.Provisioner] interface.
 var _ provision.Provisioner[*Machine] = (*Provisioner)(nil)
@@ -394,7 +397,7 @@ func (p *Provisioner) ensureInstance(
 						},
 					},
 					Name: oxide.Name(pctx.GetRequestID()),
-					Size: oxide.ByteCount(machineClass.BootDiskSize * 1024 * 1024 * 1024),
+					Size: oxide.ByteCount(machineClass.BootDiskSize * gibibyte),
 				},
 			},
 			CpuPlatform: machineClass.CPUPlatform,
@@ -406,7 +409,7 @@ func (p *Provisioner) ensureInstance(
 			EnableJumboFrames: machineClass.EnableJumboFrames,
 			ExternalIps:       []oxide.ExternalIpCreate{},
 			Hostname:          oxide.Hostname(pctx.GetRequestID()),
-			Memory:            machineClass.Memory * 1024 * 1024 * 1024,
+			Memory:            machineClass.Memory * gibibyte,
 			Name:              oxide.Name(pctx.GetRequestID()),
 			Ncpus:             machineClass.CPUS,
 			NetworkInterfaces: networkInterfaces,
@@ -739,7 +742,7 @@ func machineClassToOxideDisks(
 				),
 				DiskBackend: backend,
 				Name:        oxide.Name(oxideDiskName(i, pctx.GetRequestID())),
-				Size:        dd.Size * 1024 * 1024 * 1024,
+				Size:        dd.Size * gibibyte,
 			},
 		})
 	}
@@ -814,10 +817,17 @@ func machineClassToOxideNetworkInterfaces(
 	}, nil
 }
 
-// roundToNearestGibibyte rounds n up to the nearest multiple of 1 GiB.
-func roundToNearestGibibyte(n int64) int64 {
-	const Gibibyte = 1024 * 1024 * 1024
-	return (n + Gibibyte - 1) / Gibibyte * Gibibyte
+// roundUpToGibibyte rounds n up to the nearest multiple of 1 GiB.
+func roundUpToGibibyte(n int64) (int64, error) {
+	if n < 0 {
+		return 0, fmt.Errorf("cannot round negative byte count %d", n)
+	}
+
+	if n > math.MaxInt64-gibibyte+1 {
+		return 0, fmt.Errorf("rounding byte count %d would overflow int64", n)
+	}
+
+	return (n + gibibyte - 1) / gibibyte * gibibyte, nil
 }
 
 // TalosImage holds all the information needed for a requested Talos image.
@@ -976,7 +986,11 @@ func createOxideImage(
 	r io.Reader,
 ) error {
 	createStart := time.Now()
-	imageSize = roundToNearestGibibyte(imageSize)
+
+	imageSize, err := roundUpToGibibyte(imageSize)
+	if err != nil {
+		return fmt.Errorf("failed rounding image size: %w", err)
+	}
 
 	logger.Info("creating oxide image from talos image",
 		zap.String("oxide.image.name", talosImage.Name),

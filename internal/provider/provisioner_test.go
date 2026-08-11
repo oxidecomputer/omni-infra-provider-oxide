@@ -1,9 +1,52 @@
 package provider
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
+
+func TestRoundUpToGibibyte(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		n       int64
+		want    int64
+		wantErr bool
+	}{
+		{name: "zero", n: 0, want: 0},
+		{name: "exact GiB", n: gibibyte, want: gibibyte},
+		{name: "round up", n: gibibyte + 1, want: 2 * gibibyte},
+		{
+			name: "largest representable result",
+			n:    math.MaxInt64 - gibibyte + 1,
+			want: math.MaxInt64 - gibibyte + 1,
+		},
+		{name: "negative", n: -1, wantErr: true},
+		{name: "overflow", n: math.MaxInt64, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := roundUpToGibibyte(tt.n)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("roundUpToGibibyte(%d) error = %v", tt.n, err)
+			}
+
+			if got != tt.want {
+				t.Fatalf(
+					"roundUpToGibibyte(%d) = %d, want %d",
+					tt.n,
+					got,
+					tt.want,
+				)
+			}
+		})
+	}
+}
 
 func TestProvisionStepsStartWithValidateRequest(t *testing.T) {
 	t.Parallel()
