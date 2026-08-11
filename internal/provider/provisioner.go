@@ -1209,57 +1209,54 @@ func bulkImport(
 readLoop:
 	for {
 		n, err := data.Read(buffer)
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				readErr = fmt.Errorf("failed reading chunk: %w", err)
-				logger.Error("failed reading chunk from image",
-					zap.Int64("oxide.image.bulk_import.offset_bytes", offset),
-					zap.Error(err),
-				)
-			}
-			break
-		}
-		if n == 0 {
-			break
-		}
+		if n > 0 {
+			// Skip chunks that are all zeroes. The disk is already zeroed.
+			if !bytes.Equal(buffer[:n], zeros[:n]) {
+				select {
+				case <-ticker.C:
+					fields := []zap.Field{
+						zap.Duration("oxide.image.bulk_import.duration", time.Since(start)),
+					}
+					if totalSize > 0 {
+						pct := float64(processedBytes.Load()) * 100 / float64(totalSize)
+						fields = append(fields,
+							zap.Float64("oxide.image.bulk_import.progress", pct),
+						)
+						logger.Info("still performing bulk import", fields...)
+					}
+				default:
+				}
 
-		// Skip chunks that are all zeroes. The disk is already zeroed.
-		if bytes.Equal(buffer[:n], zeros[:n]) {
+				select {
+				case <-ctx.Done():
+					readErr = fmt.Errorf(
+						"context canceled during bulk import read at offset_bytes %d: %w",
+						offset, ctx.Err(),
+					)
+					logger.Error("context canceled during bulk import read",
+						zap.Int64("oxide.image.bulk_import.offset_bytes", offset),
+						zap.Error(ctx.Err()),
+					)
+					break readLoop
+				case chunks <- chunk{offset: offset, data: bytes.Clone(buffer[:n])}:
+				}
+			}
+
 			offset += int64(n)
 			processedBytes.Add(int64(n))
-			continue
 		}
 
-		select {
-		case <-ticker.C:
-			fields := []zap.Field{
-				zap.Duration("oxide.image.bulk_import.duration", time.Since(start)),
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
 			}
-			if totalSize > 0 {
-				pct := float64(processedBytes.Load()) * 100 / float64(totalSize)
-				fields = append(fields,
-					zap.Float64("oxide.image.bulk_import.progress", pct),
-				)
-				logger.Info("still performing bulk import", fields...)
-			}
-		default:
-		}
-
-		select {
-		case <-ctx.Done():
-			readErr = fmt.Errorf(
-				"context canceled during bulk import read at offset_bytes %d: %w",
-				offset, ctx.Err(),
-			)
-			logger.Error("context canceled during bulk import read",
+			readErr = fmt.Errorf("failed reading chunk: %w", err)
+			logger.Error("failed reading chunk from image",
 				zap.Int64("oxide.image.bulk_import.offset_bytes", offset),
-				zap.Error(ctx.Err()),
+				zap.Error(err),
 			)
-			break readLoop
-		case chunks <- chunk{offset: offset, data: bytes.Clone(buffer[:n])}:
+			break
 		}
-		offset += int64(n)
-		processedBytes.Add(int64(n))
 	}
 
 	close(chunks)
@@ -1267,10 +1264,13 @@ readLoop:
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("failed waiting for bulk import workers to exit: %w", err)
 	}
+	if readErr != nil {
+		return readErr
+	}
 
 	logger.Info("bulk import complete",
 		zap.Duration("oxide.image.bulk_import.duration", time.Since(start)),
 	)
 
-	return readErr
+	return nil
 }
