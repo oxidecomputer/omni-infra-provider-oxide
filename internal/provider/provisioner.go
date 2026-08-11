@@ -50,9 +50,7 @@ type Provisioner struct {
 func NewProvisioner(oxideClient *oxide.Client) *Provisioner {
 	return &Provisioner{
 		oxideClient: oxideClient,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		httpClient:  &http.Client{},
 	}
 }
 
