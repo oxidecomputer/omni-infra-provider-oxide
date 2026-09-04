@@ -1,9 +1,11 @@
 ARG GO_CONTAINER_IMAGE
 
 # Stage 1: Build the binary.
-FROM ${GO_CONTAINER_IMAGE} AS builder
+FROM --platform=${BUILDPLATFORM} ${GO_CONTAINER_IMAGE} AS builder
 
 ARG VERSION
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -11,7 +13,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
   -ldflags "-s -w -X main.version=${VERSION}" \
   .
 
