@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/ardanlabs/conf/v3 v3.9.0
 	github.com/cosi-project/runtime v1.16.0
-	github.com/oxidecomputer/oxide.go v0.10.0
+	github.com/oxidecomputer/oxide.go v0.11.0
 	github.com/siderolabs/omni/client v1.8.2
 	github.com/ulikunitz/xz v0.5.15
 	go.uber.org/zap v1.28.0
@@ -88,7 +88,7 @@ require (
 	github.com/xlab/treeprint v1.2.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/crypto v0.52.0 // indirect
