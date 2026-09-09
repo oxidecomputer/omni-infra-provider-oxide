@@ -7,6 +7,7 @@ require (
 	github.com/cosi-project/runtime v1.16.3
 	github.com/oxidecomputer/oxide.go v0.11.0
 	github.com/siderolabs/omni/client v1.11.0
+	github.com/siderolabs/talos/pkg/machinery v1.14.0
 	github.com/ulikunitz/xz v0.5.16
 	go.uber.org/zap v1.28.0
 	golang.org/x/sync v0.23.0
@@ -83,7 +84,6 @@ require (
 	github.com/siderolabs/proto-codec v0.1.4 // indirect
 	github.com/siderolabs/protoenc v0.2.4 // indirect
 	github.com/siderolabs/siderolink v0.3.17 // indirect
-	github.com/siderolabs/talos/pkg/machinery v1.14.0-rc.2.0.20260825161121-322de8bf2974 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xlab/treeprint v1.2.0 // indirect
