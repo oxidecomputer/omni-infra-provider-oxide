@@ -3,23 +3,23 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/oxidecomputer/omni-infra-provider-oxide/internal/provider/spec"
 	"github.com/oxidecomputer/oxide.go/oxide"
-	"github.com/siderolabs/omni/client/pkg/constants"
+	"github.com/siderolabs/omni/client/pkg/imagefactory"
 	"github.com/siderolabs/omni/client/pkg/infra/provision"
 	"github.com/siderolabs/omni/client/pkg/omni/resources/infra"
+	"github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -204,21 +204,22 @@ func (p *Provisioner) ensureImage(
 		zap.String("omni.request.talos_version", pctx.GetTalosVersion()),
 	)
 
-	talosImage, err := resolveTalosImage(ctx, logger, pctx)
+	media, err := resolveInstallationMedia(ctx, logger, pctx)
 	if err != nil {
-		return fmt.Errorf("failed resolving talos image: %w", err)
+		return fmt.Errorf("failed resolving installation media: %w", err)
 	}
 
+	imageName := oxideImageName(media.StorageKey)
+
 	logger = logger.With(
-		zap.String("talos.image.name", talosImage.Name),
-		zap.String("talos.image.schematic_id", talosImage.SchematicID),
-		zap.String("talos.image.url", talosImage.URL),
+		zap.String("talos.image.name", string(imageName)),
+		zap.String("talos.image.storage_key", media.StorageKey),
 	)
 
 	logger.Info("ensuring oxide image")
 
 	existingImage, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
-		Image:   oxide.NameOrId(talosImage.Name),
+		Image:   oxide.NameOrId(imageName),
 		Project: oxide.NameOrId(machineClass.Project),
 	})
 	switch {
@@ -236,7 +237,7 @@ func (p *Provisioner) ensureImage(
 	// Concurrent requests for the same image in the same project will coalesce to
 	// a single download/upload, while requests for the same image name in different
 	// projects will each perform a download/upload.
-	key := fmt.Sprintf("%s/%s", machineClass.Project, talosImage.Name)
+	key := fmt.Sprintf("%s/%s", machineClass.Project, imageName)
 
 	logger = logger.With(
 		zap.String("singleflight.key", key),
@@ -254,7 +255,12 @@ func (p *Provisioner) ensureImage(
 		defer cancel()
 
 		f, err := downloadImageToTempFile(
-			imageCtx, logger, p.httpClient, talosImage.URL, talosImage.Name,
+			imageCtx,
+			logger,
+			p.httpClient,
+			media.URL,
+			media.Headers,
+			string(imageName),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed downloading talos image: %w", err)
@@ -270,7 +276,7 @@ func (p *Provisioner) ensureImage(
 
 		if err := createOxideImage(
 			imageCtx, logger, p.oxideClient, pctx, machineClass,
-			talosImage, fi.Size(), f,
+			imageName, media.StorageKey, fi.Size(), f,
 		); err != nil {
 			return nil, fmt.Errorf("failed creating oxide image: %w", err)
 		}
@@ -330,20 +336,21 @@ func (p *Provisioner) ensureInstance(
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
 
-	talosImage, err := resolveTalosImage(ctx, logger, pctx)
+	media, err := resolveInstallationMedia(ctx, logger, pctx)
 	if err != nil {
-		return fmt.Errorf("failed resolving talos image: %w", err)
+		return fmt.Errorf("failed resolving installation media: %w", err)
 	}
 
+	imageName := oxideImageName(media.StorageKey)
+
 	logger = logger.With(
-		zap.String("talos.image.name", talosImage.Name),
-		zap.String("talos.image.schematic_id", talosImage.SchematicID),
-		zap.String("talos.image.url", talosImage.URL),
+		zap.String("talos.image.name", string(imageName)),
+		zap.String("talos.image.storage_key", media.StorageKey),
 	)
 
 	image, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
 		Project: oxide.NameOrId(machineClass.Project),
-		Image:   oxide.NameOrId(talosImage.Name),
+		Image:   oxide.NameOrId(imageName),
 	})
 	if err != nil {
 		logger.Error("failed viewing oxide image during instance create", zap.Error(err))
@@ -486,9 +493,9 @@ func (p *Provisioner) recordMachineState(
 	return nil
 }
 
-// ensureProviderID creates an Omni configuration patch that sets the kubelet
-// providerID extra config to the Oxide instance ID, allowing Kubernetes to
-// associate the node with its Oxide instance.
+// ensureProviderID creates an Omni configuration patch that sets providerID to
+// the Oxide instance ID within the kubelet, allowing Kubernetes to associate
+// the node with its Oxide instance.
 func (p *Provisioner) ensureProviderID(
 	ctx context.Context,
 	logger *zap.Logger,
@@ -524,22 +531,11 @@ func (p *Provisioner) ensureProviderID(
 		zap.String("kubelet.provider_id", providerID),
 	)
 
-	patch := struct {
-		Machine struct {
-			Kubelet struct {
-				ExtraConfig map[string]string `yaml:"extraConfig"`
-			} `yaml:"kubelet"`
-		} `yaml:"machine"`
-	}{}
-	patch.Machine.Kubelet.ExtraConfig = map[string]string{
-		"providerID": providerID,
-	}
-
-	b, err := yaml.Marshal(patch)
+	b, err := providerIDPatch(pctx.GetTalosVersion(), providerID)
 	if err != nil {
-		logger.Error("failed marshaling providerID patch", zap.Error(err))
+		logger.Error("failed building providerID patch", zap.Error(err))
 		return fmt.Errorf(
-			"failed marshaling providerID patch: %w", err,
+			"failed building providerID patch: %w", err,
 		)
 	}
 
@@ -554,6 +550,42 @@ func (p *Provisioner) ensureProviderID(
 	logger.Info("created providerID config patch")
 
 	return nil
+}
+
+func providerIDPatch(talosVersion, providerID string) ([]byte, error) {
+	contract, err := config.ParseContractFromVersion(talosVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed parsing Talos version %q: %w", talosVersion, err)
+	}
+
+	if contract.MultidocKubernetesConfigSupported() {
+		patch := struct {
+			APIVersion string            `yaml:"apiVersion"`
+			Kind       string            `yaml:"kind"`
+			Config     map[string]string `yaml:"config"`
+		}{
+			APIVersion: "v1alpha1",
+			Kind:       "KubeletConfig",
+			Config: map[string]string{
+				"providerID": providerID,
+			},
+		}
+
+		return yaml.Marshal(patch)
+	}
+
+	patch := struct {
+		Machine struct {
+			Kubelet struct {
+				ExtraConfig map[string]string `yaml:"extraConfig"`
+			} `yaml:"kubelet"`
+		} `yaml:"machine"`
+	}{}
+	patch.Machine.Kubelet.ExtraConfig = map[string]string{
+		"providerID": providerID,
+	}
+
+	return yaml.Marshal(patch)
 }
 
 // Deprovision destroys the [Machine] that was created during
@@ -828,25 +860,23 @@ func roundUpToGibibyte(n int64) (int64, error) {
 	return (n + gibibyte - 1) / gibibyte * gibibyte, nil
 }
 
-// TalosImage holds all the information needed for a requested Talos image.
-type TalosImage struct {
-	// Name is the name of the Talos image.
-	Name string
-
-	// URL is the Talos Image Factory URL where the image can be downloaded.
-	URL string
-
-	// SchematicID is the Talos schematic ID for the image.
-	SchematicID string
-}
-
-// resolveTalosImage determines the information for the requested Talos image.
-func resolveTalosImage(
+// resolveInstallationMedia resolves the requested Talos installation media.
+func resolveInstallationMedia(
 	ctx context.Context,
 	logger *zap.Logger,
 	pctx provision.Context[*Machine],
-) (*TalosImage, error) {
-	schematicID, err := pctx.GenerateSchematicID(ctx, logger,
+) (imagefactory.InstallationMedia, error) {
+	media, err := pctx.EnsureInstallationMedia(
+		ctx,
+		logger,
+		provision.MediaSpec{
+			MediaSpec: imagefactory.MediaSpec{
+				Kind:         imagefactory.InstallationMediaKindDisk,
+				Platform:     "nocloud",
+				Architecture: "amd64",
+				Format:       "raw.xz",
+			},
+		},
 		provision.WithExtraKernelArgs(
 			"-console",
 			"console=ttyS0",
@@ -862,35 +892,21 @@ func resolveTalosImage(
 		provision.WithoutConnectionParams(),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed generating schematic id: %w", err)
-	}
-
-	talosVersion := pctx.GetTalosVersion()
-
-	imageFactoryBaseURL, err := url.Parse(constants.ImageFactoryBaseURL)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"failed parsing talos image factory base url: %w", err,
+		return imagefactory.InstallationMedia{}, fmt.Errorf(
+			"failed ensuring installation media: %w",
+			err,
 		)
 	}
 
-	imageFactoryURL := imageFactoryBaseURL.JoinPath(
-		"image",
-		schematicID,
-		talosVersion,
-		"nocloud-amd64.raw.xz",
-	)
+	return media, nil
+}
 
-	name := fmt.Sprintf("talos-%s-%s-nocloud",
-		strings.ReplaceAll(talosVersion, ".", "-"),
-		schematicID[:8],
-	)
+func oxideImageName(storageKey string) oxide.Name {
+	storageKeyHash := sha256.Sum256([]byte(storageKey))
 
-	return &TalosImage{
-		SchematicID: schematicID,
-		Name:        name,
-		URL:         imageFactoryURL.String(),
-	}, nil
+	return oxide.Name(
+		fmt.Sprintf("talos-%x", storageKeyHash)[:oxideNameMaxLength],
+	)
 }
 
 // downloadImageToTempFile downloads and decompresses the image at url into a
@@ -901,6 +917,7 @@ func downloadImageToTempFile(
 	logger *zap.Logger,
 	httpClient *http.Client,
 	url string,
+	headers http.Header,
 	namePrefix string,
 ) (_ *os.File, err error) {
 	logger.Info("downloading talos image")
@@ -925,6 +942,8 @@ func downloadImageToTempFile(
 		logger.Error("failed creating image request", zap.Error(err))
 		return nil, fmt.Errorf("failed creating image request: %w", err)
 	}
+
+	req.Header = headers.Clone()
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -979,7 +998,8 @@ func createOxideImage(
 	client *oxide.Client,
 	pctx provision.Context[*Machine],
 	machineClass MachineClass,
-	talosImage *TalosImage,
+	imageName oxide.Name,
+	storageKey string,
 	imageSize int64,
 	r io.Reader,
 ) error {
@@ -991,7 +1011,7 @@ func createOxideImage(
 	}
 
 	logger.Info("creating oxide image from talos image",
-		zap.String("oxide.image.name", talosImage.Name),
+		zap.String("oxide.image.name", string(imageName)),
 		zap.Int64("oxide.image.size_bytes", imageSize),
 	)
 
@@ -1011,7 +1031,7 @@ func createOxideImage(
 					},
 				},
 			},
-			Name: oxide.Name(talosImage.Name),
+			Name: imageName,
 			Size: oxide.ByteCount(imageSize),
 		},
 	})
@@ -1042,7 +1062,7 @@ func createOxideImage(
 		// [importBytesToDisk] may fail before the snapshot is created, in which case a
 		// 404 here is expected and should not be logged as an error.
 		if err := client.SnapshotDelete(cleanupCtx, oxide.SnapshotDeleteParams{
-			Snapshot: oxide.NameOrId(talosImage.Name),
+			Snapshot: oxide.NameOrId(imageName),
 			Project:  oxide.NameOrId(machineClass.Project),
 		}); err != nil && !errors.Is(err, oxide.ErrObjectNotFound) {
 			logger.Error("failed deleting temporary snapshot", zap.Error(err))
@@ -1059,7 +1079,7 @@ func createOxideImage(
 		logger,
 		client,
 		oxide.NameOrId(disk.Id),
-		oxide.Name(talosImage.Name),
+		imageName,
 		imageSize,
 		r,
 	); err != nil {
@@ -1072,7 +1092,7 @@ func createOxideImage(
 	)
 
 	snapshot, err := client.SnapshotView(ctx, oxide.SnapshotViewParams{
-		Snapshot: oxide.NameOrId(talosImage.Name),
+		Snapshot: oxide.NameOrId(imageName),
 		Project:  oxide.NameOrId(machineClass.Project),
 	})
 	if err != nil {
@@ -1086,9 +1106,9 @@ func createOxideImage(
 			Description: fmt.Sprintf(
 				"Talos Linux v%s NoCloud (%s).",
 				pctx.GetTalosVersion(),
-				talosImage.SchematicID,
+				storageKey,
 			),
-			Name: oxide.Name(talosImage.Name),
+			Name: imageName,
 			Os:   "Talos Linux",
 			Source: oxide.ImageSource{
 				Value: &oxide.ImageSourceSnapshot{

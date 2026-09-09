@@ -6,6 +6,63 @@ import (
 	"testing"
 )
 
+func TestProviderIDPatch(t *testing.T) {
+	t.Parallel()
+
+	const providerID = "oxide://instance-id"
+
+	tests := []struct {
+		name         string
+		talosVersion string
+		want         string
+	}{
+		{
+			name:         "Talos 1.13 kubelet configuration",
+			talosVersion: "1.13.9",
+			want: strings.TrimPrefix(`
+machine:
+    kubelet:
+        extraConfig:
+            providerID: oxide://instance-id
+`, "\n"),
+		},
+		{
+			name:         "Talos 1.14 kubelet configuration",
+			talosVersion: "1.14.0",
+			want: strings.TrimPrefix(`
+apiVersion: v1alpha1
+kind: KubeletConfig
+config:
+    providerID: oxide://instance-id
+`, "\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := providerIDPatch(tt.talosVersion, providerID)
+			if err != nil {
+				t.Fatalf("providerIDPatch() error = %v", err)
+			}
+
+			if string(got) != tt.want {
+				t.Fatalf("providerIDPatch() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProviderIDPatchRejectsInvalidTalosVersion(t *testing.T) {
+	t.Parallel()
+
+	_, err := providerIDPatch("invalid", "oxide://instance-id")
+	if err == nil {
+		t.Fatal("providerIDPatch() expected an error")
+	}
+}
+
 func TestRoundUpToGibibyte(t *testing.T) {
 	t.Parallel()
 
