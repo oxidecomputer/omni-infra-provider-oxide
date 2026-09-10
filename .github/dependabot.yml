@@ -12,17 +12,6 @@ updates:
           - "minor"
           - "patch"
 
-  - package-ecosystem: "gomod"
-    directory: "/tools"
-    schedule:
-      interval: "weekly"
-    groups:
-      go-tool-dependencies:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

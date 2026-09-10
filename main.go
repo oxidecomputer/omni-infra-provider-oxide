@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 
 	"github.com/ardanlabs/conf/v3"
 	"github.com/oxidecomputer/omni-infra-provider-oxide/internal/provider"
@@ -18,10 +19,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Version represents the version of the binary. It can be overridden at
-// compile-time as necessary.
-var version = "dev"
-
 func main() {
 	if err := run(context.Background()); err != nil {
 		log.Fatalf("%s", err.Error())
@@ -29,6 +26,11 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	buildInfo, ok := debug.ReadBuildInfo()
+	if !ok {
+		return errors.New("failed reading Go build information")
+	}
+
 	logger, err := zap.NewProductionConfig().Build(
 		zap.AddStacktrace(zapcore.ErrorLevel),
 	)
@@ -38,14 +40,15 @@ func run(ctx context.Context) error {
 
 	cfg := Config{
 		Version: conf.Version{
-			Build: version,
+			Build: buildInfo.Main.Version,
 			Desc:  "Oxide Omni infrastructure provider.",
 		},
 	}
 
 	s, err := conf.Parse("", &cfg)
 	if err != nil {
-		if errors.Is(err, conf.ErrHelpWanted) {
+		if errors.Is(err, conf.ErrHelpWanted) ||
+			errors.Is(err, conf.ErrVersionWanted) {
 			fmt.Fprintf(os.Stdout, "%s", s)
 			return nil
 		}

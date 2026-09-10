@@ -45,22 +45,19 @@ export OXIDE_HOST='https://oxide.sys.example.com'
 export OXIDE_TOKEN='oxide-token-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
 ----
 
-. Run the infrastructure provider. Update `${TAG}` to use the latest stable
-Oxide infrastructure provider, without the `v` prefix, which can be found on
+. Download the archive for your operating system and architecture from
 https://github.com/oxidecomputer/omni-infra-provider-oxide/releases[GitHub
-releases].
+releases], then extract it.
+
+. Run the infrastructure provider.
 +
+[source,shell]
 ----
-docker run --rm \
-  --env OMNI_ENDPOINT \
-  --env OMNI_SERVICE_ACCOUNT_KEY \
-  --env OXIDE_HOST \
-  --env OXIDE_TOKEN \
-  ghcr.io/oxidecomputer/omni-infra-provider-oxide:${TAG}
+./omni-infra-provider-oxide
 ----
 
 == Development
 
 Please refer to link:CONTRIBUTING.adoc[`CONTRIBUTING.adoc`] for development
 information, including how to run the infrastructure provider locally, run the
-tests, and publish a release.
+tests, and build release artifacts.

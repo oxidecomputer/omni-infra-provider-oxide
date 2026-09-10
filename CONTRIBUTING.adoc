@@ -6,16 +6,30 @@ this infrastructure provider.
 
 == Requirements
 
-* https://go.dev/[Go] - To build and test the infrastructure provider. Use the
-version of Go specified in `go.mod`.
-* https://podman.io/[Podman] or https://www.docker.com/[Docker] - To build and
-run the container image. Either container runtime works.
+* https://nixos.org/[Nix] with
+https://nixos.wiki/wiki/Flakes[flakes enabled].
 
 == Development
 
 The `Makefile` is the primary method of interfacing with this project. Refer to
-its targets for more information. The build artifact is a container image to be
-run wherever it'll have access to the Oxide silo it's configured to connect to.
+its targets for more information.
+
+Enter the development shell before running development commands. The shell
+provides the pinned versions of Go and Make used by the project.
+
+[source,shell]
+----
+nix develop
+----
+
+Build the infrastructure provider binary.
+
+[source,shell]
+----
+make build
+----
+
+The binary is written to `bin/omni-infra-provider-oxide`.
 
 === Running Locally
 
@@ -38,39 +52,22 @@ make dev
 
 == Running Tests
 
-Run the unit tests within a container.
+Run the unit tests locally.
 
 [source,shell]
 ----
 make test
 ----
 
-== Release Process
+== Building Release Artifacts
 
-The release process is manual and runs from a developer's workstation.
+Build a local snapshot of the release archives and checksums.
 
-. Check out the revision to be released. Ensure the working copy is clean.
-
-. Build the container image.
-+
 [source,shell]
 ----
-RELEASE=true make build
+make snapshot
 ----
 
-. Push the container image.
-+
-[source,shell]
-----
-RELEASE=true make push
-----
-
-. Create a GitHub release.
-
-.. Create and push a Git tag with the v-prefixed `VERSION` (e.g., v0.1.0).
-
-.. Create the GitHub release for the newly pushed tag. Automatically generate
-the release notes.
-
-. Open a pull request that updates the `VERSION` within the `Makefile` to the
-next version.
+GoReleaser writes Linux and Windows archives for amd64 and arm64, and a macOS
+archive for arm64, to `dist/`. Linux and macOS artifacts use the `tar.gz`
+format, while Windows artifacts use `zip`.

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Check Nix flake
+        run: nix flake check --all-systems
+
+      - name: Build binary
+        run: nix develop --command make build
+
+      - name: Run tests and lint
+        run: nix develop --command make check
+
+      - name: Verify generated code
+        run: |
+          nix develop --command make generate
+          git diff --exit-code -- internal/provider/spec/machine.pb.go
