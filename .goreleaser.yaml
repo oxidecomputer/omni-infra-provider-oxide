@@ -1,0 +1,36 @@
+version: 2
+
+project_name: omni-infra-provider-oxide
+
+builds:
+  - main: .
+    binary: omni-infra-provider-oxide
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -buildvcs=true
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
