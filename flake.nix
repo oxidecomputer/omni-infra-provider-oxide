@@ -20,7 +20,7 @@
         {
           default = pkgs.mkShellNoCC {
             packages = [
-              pkgs.go
+              pkgs.go_1_27
               pkgs.golangci-lint
               pkgs.goreleaser
               pkgs.gnumake
