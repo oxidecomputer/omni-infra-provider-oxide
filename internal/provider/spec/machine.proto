@@ -11,6 +11,23 @@ message Machine {
   Project project = 1;
   Instance instance = 2;
   repeated Disk disks = 3;
+  Image image = 4;
+}
+
+// ImageRegistration records an Oxide image this infrastructure provider
+// created for an installation medium in a project. The provider only boots
+// images recorded here, so an image someone else creates under the same name
+// is never used.
+message ImageRegistration {
+  string project_id = 1;
+  string storage_key = 2;
+  Image image = 3;
+}
+
+// Image identifies an Oxide image created by the infrastructure provider.
+message Image {
+  string id = 1;
+  string name = 2;
 }
 
 // Project identifies the Oxide project the machine was created in.

@@ -6,6 +6,7 @@ require (
 	github.com/ardanlabs/conf/v3 v3.13.0
 	github.com/cosi-project/runtime v1.16.3
 	github.com/oxidecomputer/oxide.go v0.12.0
+	github.com/siderolabs/image-factory v1.6.2-0.20260904131343-4520b38a89a6
 	github.com/siderolabs/omni/client v1.12.3
 	github.com/siderolabs/talos/pkg/machinery v1.15.0-alpha.0.0.20260908133727-5c5fd29e95f7
 	github.com/ulikunitz/xz v0.5.17
@@ -79,7 +80,6 @@ require (
 	github.com/siderolabs/gen v0.8.7 // indirect
 	github.com/siderolabs/go-api-signature v0.3.13 // indirect
 	github.com/siderolabs/go-pointer v1.0.1 // indirect
-	github.com/siderolabs/image-factory v1.6.2-0.20260904131343-4520b38a89a6 // indirect
 	github.com/siderolabs/net v0.4.0 // indirect
 	github.com/siderolabs/proto-codec v0.1.4 // indirect
 	github.com/siderolabs/protoenc v0.2.4 // indirect

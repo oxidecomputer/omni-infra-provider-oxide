@@ -30,6 +30,7 @@ type Machine struct {
 	Project       *Project               `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Instance      *Instance              `protobuf:"bytes,2,opt,name=instance,proto3" json:"instance,omitempty"`
 	Disks         []*Disk                `protobuf:"bytes,3,rep,name=disks,proto3" json:"disks,omitempty"`
+	Image         *Image                 `protobuf:"bytes,4,opt,name=image,proto3" json:"image,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -85,6 +86,130 @@ func (x *Machine) GetDisks() []*Disk {
 	return nil
 }
 
+func (x *Machine) GetImage() *Image {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+// ImageRegistration records an Oxide image this infrastructure provider
+// created for an installation medium in a project. The provider only boots
+// images recorded here, so an image someone else creates under the same name
+// is never used.
+type ImageRegistration struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProjectId     string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	StorageKey    string                 `protobuf:"bytes,2,opt,name=storage_key,json=storageKey,proto3" json:"storage_key,omitempty"`
+	Image         *Image                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ImageRegistration) Reset() {
+	*x = ImageRegistration{}
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ImageRegistration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ImageRegistration) ProtoMessage() {}
+
+func (x *ImageRegistration) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ImageRegistration.ProtoReflect.Descriptor instead.
+func (*ImageRegistration) Descriptor() ([]byte, []int) {
+	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ImageRegistration) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *ImageRegistration) GetStorageKey() string {
+	if x != nil {
+		return x.StorageKey
+	}
+	return ""
+}
+
+func (x *ImageRegistration) GetImage() *Image {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+// Image identifies an Oxide image created by the infrastructure provider.
+type Image struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Image) Reset() {
+	*x = Image{}
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Image) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Image) ProtoMessage() {}
+
+func (x *Image) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Image.ProtoReflect.Descriptor instead.
+func (*Image) Descriptor() ([]byte, []int) {
+	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Image) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Image) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 // Project identifies the Oxide project the machine was created in.
 type Project struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -96,7 +221,7 @@ type Project struct {
 
 func (x *Project) Reset() {
 	*x = Project{}
-	mi := &file_internal_provider_spec_machine_proto_msgTypes[1]
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -108,7 +233,7 @@ func (x *Project) String() string {
 func (*Project) ProtoMessage() {}
 
 func (x *Project) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_provider_spec_machine_proto_msgTypes[1]
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -121,7 +246,7 @@ func (x *Project) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Project.ProtoReflect.Descriptor instead.
 func (*Project) Descriptor() ([]byte, []int) {
-	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{1}
+	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Project) GetId() string {
@@ -149,7 +274,7 @@ type Instance struct {
 
 func (x *Instance) Reset() {
 	*x = Instance{}
-	mi := &file_internal_provider_spec_machine_proto_msgTypes[2]
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -161,7 +286,7 @@ func (x *Instance) String() string {
 func (*Instance) ProtoMessage() {}
 
 func (x *Instance) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_provider_spec_machine_proto_msgTypes[2]
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -174,7 +299,7 @@ func (x *Instance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Instance.ProtoReflect.Descriptor instead.
 func (*Instance) Descriptor() ([]byte, []int) {
-	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{2}
+	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Instance) GetId() string {
@@ -202,7 +327,7 @@ type Disk struct {
 
 func (x *Disk) Reset() {
 	*x = Disk{}
-	mi := &file_internal_provider_spec_machine_proto_msgTypes[3]
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -214,7 +339,7 @@ func (x *Disk) String() string {
 func (*Disk) ProtoMessage() {}
 
 func (x *Disk) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_provider_spec_machine_proto_msgTypes[3]
+	mi := &file_internal_provider_spec_machine_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -227,7 +352,7 @@ func (x *Disk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Disk.ProtoReflect.Descriptor instead.
 func (*Disk) Descriptor() ([]byte, []int) {
-	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{3}
+	return file_internal_provider_spec_machine_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Disk) GetId() string {
@@ -248,11 +373,21 @@ var File_internal_provider_spec_machine_proto protoreflect.FileDescriptor
 
 const file_internal_provider_spec_machine_proto_rawDesc = "" +
 	"\n" +
-	"$internal/provider/spec/machine.proto\x12\x13oxide.provider.spec\"\xad\x01\n" +
+	"$internal/provider/spec/machine.proto\x12\x13oxide.provider.spec\"\xdf\x01\n" +
 	"\aMachine\x126\n" +
 	"\aproject\x18\x01 \x01(\v2\x1c.oxide.provider.spec.ProjectR\aproject\x129\n" +
 	"\binstance\x18\x02 \x01(\v2\x1d.oxide.provider.spec.InstanceR\binstance\x12/\n" +
-	"\x05disks\x18\x03 \x03(\v2\x19.oxide.provider.spec.DiskR\x05disks\"-\n" +
+	"\x05disks\x18\x03 \x03(\v2\x19.oxide.provider.spec.DiskR\x05disks\x120\n" +
+	"\x05image\x18\x04 \x01(\v2\x1a.oxide.provider.spec.ImageR\x05image\"\x85\x01\n" +
+	"\x11ImageRegistration\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x1f\n" +
+	"\vstorage_key\x18\x02 \x01(\tR\n" +
+	"storageKey\x120\n" +
+	"\x05image\x18\x03 \x01(\v2\x1a.oxide.provider.spec.ImageR\x05image\"+\n" +
+	"\x05Image\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"-\n" +
 	"\aProject\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\".\n" +
@@ -275,22 +410,26 @@ func file_internal_provider_spec_machine_proto_rawDescGZIP() []byte {
 	return file_internal_provider_spec_machine_proto_rawDescData
 }
 
-var file_internal_provider_spec_machine_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_internal_provider_spec_machine_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_internal_provider_spec_machine_proto_goTypes = []any{
-	(*Machine)(nil),  // 0: oxide.provider.spec.Machine
-	(*Project)(nil),  // 1: oxide.provider.spec.Project
-	(*Instance)(nil), // 2: oxide.provider.spec.Instance
-	(*Disk)(nil),     // 3: oxide.provider.spec.Disk
+	(*Machine)(nil),           // 0: oxide.provider.spec.Machine
+	(*ImageRegistration)(nil), // 1: oxide.provider.spec.ImageRegistration
+	(*Image)(nil),             // 2: oxide.provider.spec.Image
+	(*Project)(nil),           // 3: oxide.provider.spec.Project
+	(*Instance)(nil),          // 4: oxide.provider.spec.Instance
+	(*Disk)(nil),              // 5: oxide.provider.spec.Disk
 }
 var file_internal_provider_spec_machine_proto_depIdxs = []int32{
-	1, // 0: oxide.provider.spec.Machine.project:type_name -> oxide.provider.spec.Project
-	2, // 1: oxide.provider.spec.Machine.instance:type_name -> oxide.provider.spec.Instance
-	3, // 2: oxide.provider.spec.Machine.disks:type_name -> oxide.provider.spec.Disk
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	3, // 0: oxide.provider.spec.Machine.project:type_name -> oxide.provider.spec.Project
+	4, // 1: oxide.provider.spec.Machine.instance:type_name -> oxide.provider.spec.Instance
+	5, // 2: oxide.provider.spec.Machine.disks:type_name -> oxide.provider.spec.Disk
+	2, // 3: oxide.provider.spec.Machine.image:type_name -> oxide.provider.spec.Image
+	2, // 4: oxide.provider.spec.ImageRegistration.image:type_name -> oxide.provider.spec.Image
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_internal_provider_spec_machine_proto_init() }
@@ -304,7 +443,7 @@ func file_internal_provider_spec_machine_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_provider_spec_machine_proto_rawDesc), len(file_internal_provider_spec_machine_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -27,3 +27,31 @@ func (MachineExtension) ResourceDefinition() meta.ResourceDefinitionSpec {
 		PrintColumns:     []meta.PrintColumn{},
 	}
 }
+
+// ImageRegistration is the resource that records an Oxide image this
+// infrastructure provider created. Only the provider can write resources in
+// its Omni namespace, so a registration can't be forged by users.
+type ImageRegistration = typed.Resource[
+	ImageRegistrationSpec, ImageRegistrationExtension,
+]
+
+// ImageRegistrationSpec represents the protobuf structure for an
+// [ImageRegistration].
+type ImageRegistrationSpec = protobuf.ResourceSpec[
+	spec.ImageRegistration, *spec.ImageRegistration,
+]
+
+// ImageRegistrationExtension soley exists to implement the [typed.Extension]
+// interface.
+type ImageRegistrationExtension struct{}
+
+// ResourceDefinition returns the resource definition for an
+// [ImageRegistration].
+func (ImageRegistrationExtension) ResourceDefinition() meta.ResourceDefinitionSpec {
+	return meta.ResourceDefinitionSpec{
+		Type:             infra.ResourceType("ImageRegistration", ID),
+		Aliases:          []resource.Type{},
+		DefaultNamespace: infra.ResourceNamespace(ID),
+		PrintColumns:     []meta.PrintColumn{},
+	}
+}

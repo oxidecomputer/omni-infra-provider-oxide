@@ -11,9 +11,11 @@ import (
 	"runtime/debug"
 
 	"github.com/ardanlabs/conf/v3"
+	"github.com/cosi-project/runtime/pkg/resource/protobuf"
 	"github.com/oxidecomputer/omni-infra-provider-oxide/internal/provider"
 	"github.com/oxidecomputer/oxide.go/oxide"
 	"github.com/siderolabs/omni/client/pkg/client"
+	"github.com/siderolabs/omni/client/pkg/client/omni"
 	"github.com/siderolabs/omni/client/pkg/infra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -70,10 +72,29 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("failed creating oxide client: %w", err)
 	}
 
-	provisioner := provider.NewProvisioner(oxideClient)
-
 	// Explicitly set the provider ID. See [provider.ID] for more information.
 	provider.ID = cfg.ProviderID
+
+	// The provisioner records the Oxide images it creates as resources in the
+	// provider's Omni namespace, which the infra library's own client doesn't
+	// expose to provision steps.
+	var registration provider.ImageRegistration
+	if err := protobuf.RegisterResource(
+		registration.ResourceDefinition().Type, &registration,
+	); err != nil {
+		return fmt.Errorf("failed registering image registration resource: %w", err)
+	}
+
+	omniClient, err := client.New(cfg.OmniEndpoint,
+		client.WithServiceAccount(cfg.OmniServiceAccountKey),
+		client.WithOmniClientOptions(omni.WithProviderID(provider.ID)),
+	)
+	if err != nil {
+		return fmt.Errorf("failed creating omni client: %w", err)
+	}
+	defer omniClient.Close() //nolint:errcheck
+
+	provisioner := provider.NewProvisioner(oxideClient, omniClient.Omni().State())
 
 	provider, err := infra.NewProvider(provider.ID, provisioner, infra.ProviderConfig{
 		Name:        cfg.ProviderName,

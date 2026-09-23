@@ -3,7 +3,6 @@ package provider
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -11,9 +10,15 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/cosi-project/runtime/pkg/resource"
+	"github.com/cosi-project/runtime/pkg/resource/protobuf"
+	"github.com/cosi-project/runtime/pkg/resource/typed"
+	"github.com/cosi-project/runtime/pkg/safe"
+	"github.com/cosi-project/runtime/pkg/state"
 	"github.com/oxidecomputer/omni-infra-provider-oxide/internal/provider/spec"
 	"github.com/oxidecomputer/oxide.go/oxide"
 	"github.com/siderolabs/omni/client/pkg/imagefactory"
@@ -40,6 +45,10 @@ type Provisioner struct {
 	oxideClient *oxide.Client
 	httpClient  *http.Client
 
+	// omniState stores the [ImageRegistration] resources that record which
+	// Oxide images this provider created.
+	omniState state.State
+
 	// imageGroup is used to make [Provisioner.ensureImage] safe for concurrent
 	// use, ensuring only one goroutine performs the expensive download and upload
 	// operations.
@@ -47,10 +56,11 @@ type Provisioner struct {
 }
 
 // NewProvisioner builds and returns a new [Provisioner].
-func NewProvisioner(oxideClient *oxide.Client) *Provisioner {
+func NewProvisioner(oxideClient *oxide.Client, omniState state.State) *Provisioner {
 	return &Provisioner{
 		oxideClient: oxideClient,
 		httpClient:  &http.Client{},
+		omniState:   omniState,
 	}
 }
 
@@ -186,8 +196,9 @@ func machineClassFromContext(
 	return machineClass, nil
 }
 
-// ensureImage ensures that the requested Talos image exists in the target
-// Oxide project, downloading and uploading it if it does not already exist.
+// ensureImage ensures that this provider has created the requested Talos image
+// in the target Oxide project, downloading and uploading it if not, and pins
+// the image ID in the machine state for [Provisioner.ensureInstance].
 func (p *Provisioner) ensureImage(
 	ctx context.Context,
 	logger *zap.Logger,
@@ -209,41 +220,35 @@ func (p *Provisioner) ensureImage(
 		return fmt.Errorf("failed resolving installation media: %w", err)
 	}
 
-	imageName := oxideImageName(media.StorageKey)
+	imageName, err := oxideImageName(pctx.GetTalosVersion(), media.StorageKey)
+	if err != nil {
+		return fmt.Errorf("failed deriving oxide image name: %w", err)
+	}
+
+	// Registrations are keyed on the project ID because a machine class may
+	// name the same project by name or by ID.
+	project, err := p.oxideClient.ProjectView(ctx, oxide.ProjectViewParams{
+		Project: machineClass.Project,
+	})
+	if err != nil {
+		logger.Error("failed viewing oxide project", zap.Error(err))
+		return fmt.Errorf("failed viewing oxide project: %w", err)
+	}
+
+	// Key on both project and storage key because Oxide images are
+	// project-scoped. Concurrent requests for the same image in the same project
+	// will coalesce to a single download/upload, while requests for the same
+	// image in different projects will each perform a download/upload.
+	key := fmt.Sprintf("%s.%s", project.Id, media.StorageKey)
 
 	logger = logger.With(
 		zap.String("talos.image.name", string(imageName)),
 		zap.String("talos.image.storage_key", media.StorageKey),
-	)
-
-	logger.Info("ensuring oxide image")
-
-	existingImage, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
-		Image:   oxide.NameOrId(imageName),
-		Project: oxide.NameOrId(machineClass.Project),
-	})
-	switch {
-	case err == nil:
-		logger.Info("oxide image already exists, skipping creation",
-			zap.String("oxide.image.id", existingImage.Id),
-		)
-		return nil
-	case !errors.Is(err, oxide.ErrObjectNotFound):
-		logger.Error("failed viewing oxide image", zap.Error(err))
-		return fmt.Errorf("failed viewing oxide image: %w", err)
-	}
-
-	// Key on both project and image name because Oxide images are project-scoped.
-	// Concurrent requests for the same image in the same project will coalesce to
-	// a single download/upload, while requests for the same image name in different
-	// projects will each perform a download/upload.
-	key := fmt.Sprintf("%s/%s", machineClass.Project, imageName)
-
-	logger = logger.With(
+		zap.String("oxide.project.id", project.Id),
 		zap.String("singleflight.key", key),
 	)
 
-	logger.Info("oxide image not found, downloading and uploading")
+	logger.Info("ensuring oxide image")
 
 	// Use DoChan so each caller can return when its own context is canceled without
 	// aborting the shared work. The leader runs on a detached context so one caller
@@ -254,34 +259,10 @@ func (p *Provisioner) ensureImage(
 		)
 		defer cancel()
 
-		f, err := downloadImageToTempFile(
-			imageCtx,
-			logger,
-			p.httpClient,
-			media.URL,
-			media.Headers,
-			string(imageName),
+		return p.registeredImage(
+			imageCtx, logger, pctx, machineClass, key, project.Id, media,
+			imageName,
 		)
-		if err != nil {
-			return nil, fmt.Errorf("failed downloading talos image: %w", err)
-		}
-		defer f.Close()
-		defer os.Remove(f.Name())
-
-		// Fetch the image size to create the correctly sized Oxide disk for the image.
-		fi, err := f.Stat()
-		if err != nil {
-			return nil, fmt.Errorf("failed retrieving file information: %w", err)
-		}
-
-		if err := createOxideImage(
-			imageCtx, logger, p.oxideClient, pctx, machineClass,
-			imageName, media.StorageKey, fi.Size(), f,
-		); err != nil {
-			return nil, fmt.Errorf("failed creating oxide image: %w", err)
-		}
-
-		return nil, nil
 	})
 
 	select {
@@ -292,11 +273,165 @@ func (p *Provisioner) ensureImage(
 		return fmt.Errorf("timed out while creating image: %w", ctx.Err())
 	case res := <-ch:
 		if res.Err != nil {
-			return fmt.Errorf("failed creating image: %w", res.Err)
+			return fmt.Errorf("failed ensuring image: %w", res.Err)
 		}
+
+		// Copy the image so callers sharing this result don't share messages.
+		image := res.Val.(*spec.Image) //nolint:forcetypeassert,errcheck
+		pctx.State.TypedSpec().Value.Image = &spec.Image{
+			Id:   image.GetId(),
+			Name: image.GetName(),
+		}
+
+		logger.Info("pinned oxide image",
+			zap.String("oxide.image.id", image.GetId()),
+		)
 	}
 
 	return nil
+}
+
+// registeredImage returns the image this provider registered for the
+// installation media in the project, creating and registering one when there is
+// none or the registered image was deleted.
+//
+// An image is trusted only when this provider's own [oxide.Client.ImageCreate]
+// returned its ID, so an existing image is never adopted by name. If an image
+// this provider did not register holds the name, registeredImage fails rather
+// than use it or pick another name, leaving it to an operator to delete it.
+func (p *Provisioner) registeredImage(
+	ctx context.Context,
+	logger *zap.Logger,
+	pctx provision.Context[*Machine],
+	machineClass MachineClass,
+	registrationID string,
+	projectID string,
+	media imagefactory.InstallationMedia,
+	imageName oxide.Name,
+) (*spec.Image, error) {
+	registration, err := safe.StateGetByID[*ImageRegistration](
+		ctx, p.omniState, registrationID,
+	)
+	switch {
+	case err == nil:
+		image := registration.TypedSpec().Value.GetImage()
+
+		// Oxide names can't be UUIDs, so this looks the image up by ID only.
+		_, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
+			Image: oxide.NameOrId(image.GetId()),
+		})
+		switch {
+		case err == nil:
+			logger.Info("registered oxide image exists, skipping creation",
+				zap.String("oxide.image.id", image.GetId()),
+			)
+			return image, nil
+		case !errors.Is(err, oxide.ErrObjectNotFound):
+			logger.Error("failed viewing registered oxide image", zap.Error(err))
+			return nil, fmt.Errorf("failed viewing registered oxide image: %w", err)
+		}
+
+		logger.Warn("registered oxide image no longer exists, creating a new one",
+			zap.String("oxide.image.id", image.GetId()),
+		)
+	case state.IsNotFoundError(err):
+		registration = nil
+	default:
+		logger.Error("failed reading oxide image registration", zap.Error(err))
+		return nil, fmt.Errorf("failed reading oxide image registration: %w", err)
+	}
+
+	// Check the name before the expensive download and upload. The image create
+	// below fails closed too if the name is taken in the meantime.
+	existingImage, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
+		Image:   oxide.NameOrId(imageName),
+		Project: machineClass.Project,
+	})
+	switch {
+	case err == nil:
+		logger.Error("oxide image name is held by an unregistered image",
+			zap.String("oxide.image.id", existingImage.Id),
+		)
+		return nil, fmt.Errorf(
+			"oxide image name %q is held by image %s, which this provider did "+
+				"not create; delete that image to continue",
+			imageName, existingImage.Id,
+		)
+	case !errors.Is(err, oxide.ErrObjectNotFound):
+		logger.Error("failed viewing oxide image", zap.Error(err))
+		return nil, fmt.Errorf("failed viewing oxide image: %w", err)
+	}
+
+	logger.Info("oxide image not found, downloading and uploading")
+
+	f, err := downloadImageToTempFile(
+		ctx,
+		logger,
+		p.httpClient,
+		media.URL,
+		media.Headers,
+		string(imageName),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed downloading talos image: %w", err)
+	}
+	defer f.Close()
+	defer os.Remove(f.Name())
+
+	// Fetch the image size to create the correctly sized Oxide disk for the image.
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed retrieving file information: %w", err)
+	}
+
+	imageID, err := createOxideImage(
+		ctx, logger, p.oxideClient, pctx, machineClass,
+		imageName, fi.Size(), f,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed creating oxide image: %w", err)
+	}
+
+	image := &spec.Image{Id: imageID, Name: string(imageName)}
+
+	if registration == nil {
+		rd := ImageRegistrationExtension{}.ResourceDefinition()
+		err = p.omniState.Create(ctx, typed.NewResource[
+			ImageRegistrationSpec, ImageRegistrationExtension,
+		](
+			resource.NewMetadata(
+				rd.DefaultNamespace, rd.Type, registrationID,
+				resource.VersionUndefined,
+			),
+			protobuf.NewResourceSpec(&spec.ImageRegistration{
+				ProjectId:  projectID,
+				StorageKey: media.StorageKey,
+				Image:      image,
+			}),
+		))
+	} else {
+		registration.TypedSpec().Value.Image = image
+		err = p.omniState.Update(ctx, registration)
+	}
+
+	if err != nil {
+		// The image now holds its name without a registration, so later attempts
+		// fail closed until it's deleted.
+		logger.Error("failed registering oxide image; delete it to continue",
+			zap.String("oxide.image.id", imageID),
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf(
+			"failed registering oxide image %s; delete it to continue: %w",
+			imageID, err,
+		)
+	}
+
+	logger.Info("registered oxide image",
+		zap.String("oxide.image.id", imageID),
+	)
+
+	return image, nil
 }
 
 // ensureInstance ensures that the requested Talos instance exists in the target
@@ -336,29 +471,15 @@ func (p *Provisioner) ensureInstance(
 		return fmt.Errorf("failed viewing oxide instance: %w", err)
 	}
 
-	media, err := resolveInstallationMedia(ctx, logger, pctx)
-	if err != nil {
-		return fmt.Errorf("failed resolving installation media: %w", err)
-	}
-
-	imageName := oxideImageName(media.StorageKey)
-
-	logger = logger.With(
-		zap.String("talos.image.name", string(imageName)),
-		zap.String("talos.image.storage_key", media.StorageKey),
-	)
-
-	image, err := p.oxideClient.ImageView(ctx, oxide.ImageViewParams{
-		Project: oxide.NameOrId(machineClass.Project),
-		Image:   oxide.NameOrId(imageName),
-	})
-	if err != nil {
-		logger.Error("failed viewing oxide image during instance create", zap.Error(err))
-		return fmt.Errorf("failed viewing oxide image during instance create: %w", err)
+	// Boot only the image ensureImage pinned, never one looked up by name.
+	image := pctx.State.TypedSpec().Value.GetImage()
+	if image.GetId() == "" {
+		return errors.New("no oxide image pinned in machine state")
 	}
 
 	logger = logger.With(
-		zap.String("oxide.image.id", image.Id),
+		zap.String("oxide.image.id", image.GetId()),
+		zap.String("oxide.image.name", image.GetName()),
 	)
 
 	disks, err := machineClassToOxideDisks(pctx, machineClass)
@@ -396,7 +517,7 @@ func (p *Provisioner) ensureInstance(
 						Value: &oxide.DiskBackendDistributed{
 							DiskSource: oxide.DiskSource{
 								Value: &oxide.DiskSourceImage{
-									ImageId: image.Id,
+									ImageId: image.GetId(),
 								},
 							},
 						},
@@ -901,12 +1022,27 @@ func resolveInstallationMedia(
 	return media, nil
 }
 
-func oxideImageName(storageKey string) oxide.Name {
-	storageKeyHash := sha256.Sum256([]byte(storageKey))
+// oxideImageName derives the deterministic Oxide image name for a Talos version
+// and installation media storage key, such as talos-v1-12-1-cb0085e751f63465.
+// It returns an error rather than truncating when the name is not a valid
+// Oxide name.
+func oxideImageName(talosVersion, storageKey string) (oxide.Name, error) {
+	version := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
 
-	return oxide.Name(
-		fmt.Sprintf("talos-%x", storageKeyHash)[:oxideNameMaxLength],
+		return '-'
+	}, "v"+strings.TrimPrefix(strings.ToLower(talosVersion), "v"))
+
+	name := fmt.Sprintf(
+		"talos-%s-%s", version, storageKey[:min(len(storageKey), 16)],
 	)
+	if err := validateOxideName(name); err != nil {
+		return "", fmt.Errorf("image name %q is invalid: %w", name, err)
+	}
+
+	return oxide.Name(name), nil
 }
 
 // downloadImageToTempFile downloads and decompresses the image at url into a
@@ -991,7 +1127,8 @@ func downloadImageToTempFile(
 // createOxideImage uploads the contents of r as a new Oxide image. It does so
 // by writing the bytes into a temporary disk, snapshotting it, and creating
 // the image from the snapshot. The temporary disk and snapshot are scratch
-// artifacts and are deleted before returning. Only the image is kept.
+// artifacts and are deleted before returning. Only the image is kept, and its
+// ID is returned.
 func createOxideImage(
 	ctx context.Context,
 	logger *zap.Logger,
@@ -999,15 +1136,14 @@ func createOxideImage(
 	pctx provision.Context[*Machine],
 	machineClass MachineClass,
 	imageName oxide.Name,
-	storageKey string,
 	imageSize int64,
 	r io.Reader,
-) error {
+) (string, error) {
 	createStart := time.Now()
 
 	imageSize, err := roundUpToGibibyte(imageSize)
 	if err != nil {
-		return fmt.Errorf("failed rounding image size: %w", err)
+		return "", fmt.Errorf("failed rounding image size: %w", err)
 	}
 
 	logger.Info("creating oxide image from talos image",
@@ -1037,7 +1173,7 @@ func createOxideImage(
 	})
 	if err != nil {
 		logger.Error("failed creating scratch disk", zap.Error(err))
-		return fmt.Errorf("failed creating scratch disk: %w", err)
+		return "", fmt.Errorf("failed creating scratch disk: %w", err)
 	}
 
 	defer func() {
@@ -1084,7 +1220,7 @@ func createOxideImage(
 		r,
 	); err != nil {
 		logger.Error("failed importing bytes to scratch disk", zap.Error(err))
-		return fmt.Errorf("failed importing bytes to scratch disk: %w", err)
+		return "", fmt.Errorf("failed importing bytes to scratch disk: %w", err)
 	}
 
 	logger.Info("completed bulk import to scratch disk",
@@ -1097,16 +1233,28 @@ func createOxideImage(
 	})
 	if err != nil {
 		logger.Error("failed viewing scratch snapshot", zap.Error(err))
-		return fmt.Errorf("failed viewing scratch snapshot: %w", err)
+		return "", fmt.Errorf("failed viewing scratch snapshot: %w", err)
+	}
+
+	// The snapshot is looked up by name, so make sure it was finalized from our
+	// scratch disk rather than created by someone else.
+	if snapshot.DiskId != disk.Id {
+		logger.Error("scratch snapshot was not created from the scratch disk",
+			zap.String("oxide.snapshot.id", snapshot.Id),
+			zap.String("oxide.snapshot.disk_id", snapshot.DiskId),
+		)
+		return "", fmt.Errorf(
+			"snapshot %s was not created from scratch disk %s",
+			snapshot.Id, disk.Id,
+		)
 	}
 
 	image, err := client.ImageCreate(ctx, oxide.ImageCreateParams{
 		Project: oxide.NameOrId(machineClass.Project),
 		Body: &oxide.ImageCreate{
 			Description: fmt.Sprintf(
-				"Talos Linux v%s NoCloud (%s).",
+				"Talos Linux v%s NoCloud.",
 				pctx.GetTalosVersion(),
-				storageKey,
 			),
 			Name: imageName,
 			Os:   "Talos Linux",
@@ -1119,18 +1267,21 @@ func createOxideImage(
 		},
 	})
 	if err != nil {
-		// Another concurrent provisioner may have already created the image with
-		// the same name. Treat that as a successful no-op since the image content
-		// is deterministic for a given name. Our scratch disk and snapshot still get
-		// cleaned up via the deferred deletes above.
-		if !errors.Is(err, oxide.ErrObjectAlreadyExists) {
-			logger.Error("failed creating oxide image", zap.Error(err))
-			return fmt.Errorf("failed creating oxide image: %w", err)
+		// An image that already holds the name was not created by this call, so it
+		// is never adopted. Our scratch disk and snapshot still get cleaned up via
+		// the deferred deletes above.
+		if errors.Is(err, oxide.ErrObjectAlreadyExists) {
+			logger.Error("oxide image name is held by an unregistered image",
+				zap.Error(err),
+			)
+			return "", fmt.Errorf(
+				"oxide image name %q is held by an image this provider did not "+
+					"create; delete that image to continue: %w",
+				imageName, err,
+			)
 		}
-		logger.Info("oxide image already exists, skipping creation",
-			zap.Duration("duration", time.Since(createStart)),
-		)
-		return nil
+		logger.Error("failed creating oxide image", zap.Error(err))
+		return "", fmt.Errorf("failed creating oxide image: %w", err)
 	}
 
 	logger.Info("created oxide image",
@@ -1138,7 +1289,7 @@ func createOxideImage(
 		zap.Duration("duration", time.Since(createStart)),
 	)
 
-	return nil
+	return image.Id, nil
 }
 
 // importBytesToDisk writes r into the disk identified by diskID and finalizes
