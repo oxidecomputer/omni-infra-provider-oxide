@@ -1,7 +1,7 @@
 name: Release
 description: Request a new release to be published.
 title: "Release: Omni Infrastructure Provider"
-projects: ["oxidecomputer/116"]
+labels: ["Omni Infrastructure Provider", "Task"]
 body:
   - type: markdown
     attributes:
