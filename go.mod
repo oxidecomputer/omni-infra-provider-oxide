@@ -6,11 +6,11 @@ require (
 	github.com/ardanlabs/conf/v3 v3.13.0
 	github.com/cosi-project/runtime v1.16.3
 	github.com/oxidecomputer/oxide.go v0.12.0
-	github.com/siderolabs/omni/client v1.12.3
+	github.com/siderolabs/omni/client v1.12.4
 	github.com/siderolabs/talos/pkg/machinery v1.15.0-alpha.0.0.20260908133727-5c5fd29e95f7
 	github.com/ulikunitz/xz v0.5.17
 	go.uber.org/zap v1.28.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
