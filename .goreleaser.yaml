@@ -2,6 +2,10 @@ version: 2
 
 project_name: omni-infra-provider-oxide
 
+before:
+  hooks:
+    - go mod tidy
+
 builds:
   - main: .
     binary: omni-infra-provider-oxide
@@ -34,3 +38,9 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
+
+release:
+  draft: true
+
+changelog:
+  disable: true
