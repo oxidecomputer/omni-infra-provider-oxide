@@ -71,3 +71,9 @@ make snapshot
 GoReleaser writes Linux and Windows archives for amd64 and arm64, and a macOS
 archive for arm64, to `dist/`. Linux and macOS artifacts use the `tar.gz`
 format, while Windows artifacts use `zip`.
+
+=== Publishing a Release
+
+The `Release` GitHub Actions workflow runs when a tag matching `v*` is pushed
+(e.g, `v0.6.0`). It builds the tagged commit and publishes the archives and
+checksums to a GitHub release.
