@@ -7,7 +7,7 @@ require (
 	github.com/cosi-project/runtime v1.17.1
 	github.com/oxidecomputer/oxide.go v0.12.0
 	github.com/siderolabs/omni/client v1.13.3
-	github.com/siderolabs/talos/pkg/machinery v1.15.0-alpha.2.0.20261028085643-3ba3d6a5e784
+	github.com/siderolabs/talos/pkg/machinery v1.15.0-beta.0
 	github.com/ulikunitz/xz v0.5.17
 	go.uber.org/zap v1.28.0
 	golang.org/x/sync v0.25.0
@@ -78,7 +78,7 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.1-0.20260702190614-8ae5a48058df // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.9 // indirect
-	github.com/siderolabs/crypto v0.6.5 // indirect
+	github.com/siderolabs/crypto v0.6.6 // indirect
 	github.com/siderolabs/gen v0.8.8 // indirect
 	github.com/siderolabs/go-api-signature v0.4.0 // indirect
 	github.com/siderolabs/go-pointer v1.0.1 // indirect
@@ -98,11 +98,11 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.6.0.20260809190231-643e93b9c9be // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.8 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
